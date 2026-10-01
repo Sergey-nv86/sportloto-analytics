@@ -4,6 +4,9 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
+    paths-ignore:
+      - "data/**"
+      - "reports/**"
   schedule:
     - cron: "15 1 * * *"
 
@@ -13,7 +16,7 @@ permissions:
 jobs:
   analyze:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -21,17 +24,20 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Run statistical pipeline
+      - name: Run full-history statistical pipeline
         run: python scripts/run_analysis.py
-      - name: Commit updated data and report
+      - name: Commit updated data and reports
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add data/results.csv reports/latest.md
-          git diff --cached --quiet || git commit -m "chore: update Sportloto analysis"
+          git add data/results.csv reports/latest.md reports/signals.md
+          git diff --cached --quiet || git commit -m "chore: update full-history Sportloto analysis"
           git push
-      - name: Upload report artifact
+      - name: Upload full report
         uses: actions/upload-artifact@v4
         with:
-          name: sportloto-report
-          path: reports/latest.md
+          name: sportloto-full-report
+          path: |
+            reports/latest.md
+            reports/signals.md
+            data/results.csv
