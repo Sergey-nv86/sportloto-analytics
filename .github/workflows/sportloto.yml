@@ -1,0 +1,35 @@
+name: Sportloto analytics
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "15 1 * * *"
+
+permissions:
+  contents: write
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Run statistical pipeline
+        run: python scripts/run_analysis.py
+      - name: Commit updated data and report
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/results.csv reports/latest.md
+          git diff --cached --quiet || git commit -m "chore: update Sportloto analysis"
+          git push
+      - name: Upload report artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sportloto-report
+          path: reports/latest.md
