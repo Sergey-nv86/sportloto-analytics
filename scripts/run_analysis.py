@@ -1,233 +1,152 @@
 #!/usr/bin/env python3
-import csv, math, random, re, ssl, statistics, urllib.request
+import csv, math, random, re, ssl, statistics, urllib.request, time
 from collections import Counter, defaultdict
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
-DATA = ROOT / "data" / "results.csv"
-REPORT = ROOT / "reports" / "latest.md"
-DATA.parent.mkdir(parents=True, exist_ok=True)
-REPORT.parent.mkdir(parents=True, exist_ok=True)
+ROOT=Path(__file__).resolve().parents[1]; DATA=ROOT/"data/results.csv"; REPORT=ROOT/"reports/latest.md"; SIGNALS=ROOT/"reports/signals.md"
+DATA.parent.mkdir(parents=True,exist_ok=True); REPORT.parent.mkdir(parents=True,exist_ok=True)
+URL="http://russkoe-loto.com/sportloto6x45/arhiv-rezultatov/{:04d}/{:02d}"; UA="Mozilla/5.0 SportlotoResearch/2.0"
+STRATEGIES=["RANDOM","HOT","COLD","RECENT30","MOMENTUM","GAP","SELFLAG","CROSSLAG","PAIRS","ENSEMBLE"]
 
-URL = "http://russkoe-loto.com/sportloto6x45/arhiv-rezultatov/{:04d}/{:02d}"
-UA = "Mozilla/5.0 SportlotoResearch/1.0"
-
-def month_iter(start, end):
-    y,m = start
-    while (y,m) <= end:
+def months(a,b):
+    y,m=a
+    while (y,m)<=b:
         yield y,m
-        m += 1
-        if m == 13: y,m = y+1,1
+        m+=1
+        if m==13:y,m=y+1,1
 
 def fetch(url):
-    req = urllib.request.Request(url, headers={"User-Agent": UA})
-    ctx = ssl._create_unverified_context()
-    with urllib.request.urlopen(req, timeout=35, context=ctx) as r:
-        return r.read().decode("utf-8", "ignore")
+    err=None
+    for k in range(3):
+        try:
+            q=urllib.request.Request(url,headers={"User-Agent":UA})
+            with urllib.request.urlopen(q,timeout=35,context=ssl._create_unverified_context()) as r:return r.read().decode("utf-8","ignore")
+        except Exception as e:
+            err=e; time.sleep(1+k)
+    raise err
 
 def parse(html):
-    rows = []
-    for chunk in html.split('<div class="row">')[1:]:
-        dm = re.search(r'href="/sportloto6x45/rezultaty/(\d+)"[^>]*>\s*([\d\s]+)\s*</a>', chunk)
-        dt = re.search(r'<time[^>]+datetime="([^"]+)"', chunk)
-        balls = re.findall(r'<li[^>]*class="ball"[^>]*>\s*(\d+)\s*</li>', chunk)
-        if not (dm and len(balls) >= 6):
-            continue
-        nums = tuple(sorted(map(int, balls[:6])))
-        if len(set(nums)) != 6 or not all(1 <= x <= 45 for x in nums):
-            continue
-        rows.append((int(dm.group(1)), dt.group(1) if dt else "", nums))
-    return rows
+    out=[]
+    for c in html.split('<div class="row">')[1:]:
+        dm=re.search(r'href="/sportloto6x45/rezultaty/(\d+)"[^>]*>\s*[\d\s]+\s*</a>',c)
+        dt=re.search(r'<time[^>]+datetime="([^"]+)"',c)
+        b=re.findall(r'<li[^>]*class="ball"[^>]*>\s*(\d+)\s*</li>',c)
+        if dm and len(b)>=6:
+            ns=tuple(sorted(map(int,b[:6])))
+            if len(set(ns))==6 and all(1<=n<=45 for n in ns):out.append((int(dm.group(1)),dt.group(1) if dt else "",ns))
+    return out
 
 def load():
-    today = datetime.utcnow()
-    start = (today.year-1, today.month)
-    end = (today.year, today.month)
-    allr = {}
-    errors = []
-    for y,m in month_iter(start,end):
+    now=datetime.utcnow(); y,m=now.year,now.month-1
+    if m==0:y,m=y-1,12
+    d={}; errors=[]; scanned=0
+    for yy,mm in months((1990,1),(y,m)):
+        scanned+=1
         try:
-            rs = parse(fetch(URL.format(y,m)))
-            for r in rs: allr[r[0]] = r
-            print(f"{y}-{m:02d}: {len(rs)} draws")
-        except Exception as e:
-            errors.append(f"{y}-{m:02d}: {e}")
-            print(f"WARNING {y}-{m:02d}: {e}")
-    rows = sorted(allr.values(), key=lambda x: (x[1],x[0]))
-    with DATA.open("w", newline="", encoding="utf-8") as f:
-        w=csv.writer(f); w.writerow(["draw","datetime","n1","n2","n3","n4","n5","n6"])
-        for d,dt,ns in rows: w.writerow([d,dt,*ns])
-    return rows, errors
+            rs=parse(fetch(URL.format(yy,mm)))
+            for r in rs:d[r[0]]=r
+            print(f"{yy}-{mm:02d}: {len(rs)}")
+        except Exception as e:errors.append(f"{yy}-{mm:02d}: {e}")
+    rows=sorted(d.values(),key=lambda x:(x[1],x[0]))
+    with DATA.open("w",newline="",encoding="utf-8") as f:
+        w=csv.writer(f);w.writerow(["draw","datetime","n1","n2","n3","n4","n5","n6"])
+        for x,dt,ns in rows:w.writerow([x,dt,*ns])
+    return rows,errors,scanned
 
-def read_data():
-    if not DATA.exists(): return []
-    out=[]
-    with DATA.open(encoding="utf-8") as f:
-        for r in csv.DictReader(f):
-            out.append((int(r["draw"]),r["datetime"],tuple(sorted(int(r[f"n{i}"]) for i in range(1,7)))))
-    return sorted(out,key=lambda x:(x[1],x[0]))
+def hit(a,b):return len(set(a)&set(b))
 
-def zscores(vals):
-    mu=sum(vals)/len(vals); sd=math.sqrt(sum((x-mu)**2 for x in vals)/len(vals)) or 1
-    return [(x-mu)/sd for x in vals]
-
-def ranks(scores):
-    return sorted(range(1,46), key=lambda n:(-scores.get(n,0), n))[:6]
-
-def predict(history, strategy):
-    counts=Counter(n for _,_,ns in history for n in ns)
-    recent30=Counter(n for _,_,ns in history[-30:] for n in ns)
-    recent100=Counter(n for _,_,ns in history[-100:] for n in ns)
-    last=set(history[-1][2])
-    scores={n:0.0 for n in range(1,46)}
-    if strategy=="HOT": scores= {n:counts[n] for n in scores}
-    elif strategy=="COLD": scores={n:-counts[n] for n in scores}
-    elif strategy=="RECENT30": scores={n:recent30[n] for n in scores}
-    elif strategy=="MOMENTUM": scores={n:recent30[n]/30.0-recent100[n]/100.0 for n in scores}
-    elif strategy=="GAP":
-        lastpos={n:-1 for n in scores}
-        for i,(_,_,ns) in enumerate(history):
-            for n in ns: lastpos[n]=i
-        scores={n:len(history)-1-lastpos[n] for n in scores}
-    elif strategy in ("SELFLAG","CROSSLAG","PAIRS"):
-        trans=defaultdict(lambda:[0,0])
-        pair=Counter()
-        for a,b in zip(history,history[1:]):
-            A=set(a[2]); B=set(b[2])
-            for n in range(1,46):
-                if n in A: trans[n][0]+=1; trans[n][1]+=int(n in B)
+def predict(h,s):
+    cnt=Counter(n for *_,ns in h for n in ns); r30=Counter(n for *_,ns in h[-30:] for n in ns); r100=Counter(n for *_,ns in h[-100:] for n in ns)
+    sc={n:0.0 for n in range(1,46)}; last=set(h[-1][2])
+    if s=="HOT":sc={n:cnt[n] for n in sc}
+    elif s=="COLD":sc={n:-cnt[n] for n in sc}
+    elif s=="RECENT30":sc={n:r30[n] for n in sc}
+    elif s=="MOMENTUM":sc={n:r30[n]/30-r100[n]/100 for n in sc}
+    elif s=="GAP":
+        pos={n:-1 for n in sc}
+        for i,(*_,ns) in enumerate(h):
+            for n in ns:pos[n]=i
+        sc={n:len(h)-1-pos[n] for n in sc}
+    elif s in ("SELFLAG","CROSSLAG","PAIRS"):
+        tr=defaultdict(lambda:[0,0]);pair=Counter()
+        for a,b in zip(h,h[1:]):
+            A=set(a[2]);B=set(b[2])
+            for n in A:tr[n][0]+=1;tr[n][1]+=n in B
             for x in A:
                 for y in B:
-                    if x!=y: pair[(x,y)]+=1
-        if strategy=="SELFLAG":
-            scores={n:(trans[n][1]/trans[n][0] if trans[n][0] else 6/45) for n in scores}
-        elif strategy=="CROSSLAG":
-            for n in scores:
-                vals=[]
-                for x in last:
-                    if trans[n][0]:
-                        vals.append(pair[(x,n)]/trans[n][0])
-                scores[n]=sum(vals)/len(vals) if vals else 6/45
-        else:
-            for n in scores:
-                scores[n]=sum(pair[(x,n)] for x in last)
-    elif strategy=="ENSEMBLE":
-        methods=["HOT","COLD","RECENT30","MOMENTUM","GAP","SELFLAG","PAIRS"]
-        mats=[]
-        for m in methods:
-            p=predict(history,m)
-            # rank score: 45..1, averaged across fixed methods
-            rr={n:46-i for i,n in enumerate(p)}
-            mats.append(rr)
-        for n in scores: scores[n]=sum(x[n] for x in mats)
-    return ranks(scores)
+                    if x!=y:pair[x,y]+=1
+        if s=="SELFLAG":sc={n:(tr[n][1]/tr[n][0] if tr[n][0] else 6/45) for n in sc}
+        elif s=="CROSSLAG":
+            sc={n:statistics.mean([pair[x,n]/max(1,tr[n][0]) for x in last]) if last else 6/45 for n in sc}
+        else:sc={n:sum(pair[x,n] for x in last) for n in sc}
+    elif s=="ENSEMBLE":
+        ms=["HOT","COLD","RECENT30","MOMENTUM","GAP","SELFLAG","PAIRS"]; mats=[]
+        for m in ms:
+            p=predict(h,m);mats.append({n:46-i for i,n in enumerate(p)})
+        sc={n:sum(z[n] for z in mats) for n in sc}
+    return sorted(sc,key=lambda n:(-sc[n],n))[:6]
 
-def hit(pred, actual): return len(set(pred)&set(actual))
+def pair_counts(rows,triples=False):
+    c=Counter()
+    for *_,ns in rows:
+        for i in range(6):
+            for j in range(i+1,6):
+                if triples:
+                    for k in range(j+1,6):c[ns[i],ns[j],ns[k]]+=1
+                else:c[ns[i],ns[j]]+=1
+    return c
 
-def hypergeom_hits(rng,k=6,K=6,N=45):
-    return sum(1 for x in rng.sample(range(1,N+1),K) if x <= k)
+def lag(rows,L=20):
+    return {k:statistics.mean(hit(rows[i-k][2],rows[i][2]) for i in range(k,len(rows))) for k in range(1,L+1)}
 
-def monte_carlo_max(predictions, actuals, sims=5000, seed=20261001):
-    rng=random.Random(seed)
-    names=list(predictions)
-    observed={m:sum(hit(predictions[m][i],actuals[i]) for i in range(len(actuals))) for m in names}
-    obsmax=max(observed.values())
-    ge=0
+def self_lag(rows):
+    den=Counter();num=Counter()
+    for i in range(1,len(rows)):
+        A=set(rows[i-1][2]);B=set(rows[i][2])
+        for n in A:den[n]+=1;num[n]+=n in B
+    return sorted(((abs(num[n]/den[n]-6/45),n,num[n]/den[n],den[n]) for n in den),reverse=True)
+
+def mc(preds,actuals,sims=5000):
+    rng=random.Random(20261001); names=list(preds); obs={m:sum(hit(preds[m][i],actuals[i]) for i in range(len(actuals))) for m in names}; best=max(obs.values());ge=0
     for _ in range(sims):
-        totals={m:0 for m in names}
+        t={m:0 for m in names}
         for i in range(len(actuals)):
-            draw=set(rng.sample(range(1,46),6))
-            for m in names: totals[m]+=len(draw & set(predictions[m][i]))
-        if max(totals.values()) >= obsmax: ge+=1
-    return observed, (ge+1)/(sims+1)
+            d=set(rng.sample(range(1,46),6))
+            for m in names:t[m]+=len(d&set(preds[m][i]))
+        ge+=max(t.values())>=best
+    return obs,(ge+1)/(sims+1)
 
 def main():
-    rows, errors = load()
-    if len(rows)<1000:
-        rows=read_data()
-    if len(rows)<1000:
-        raise SystemExit(f"Not enough data: {len(rows)} draws")
-    rows=sorted({r[0]:r for r in rows}.values(), key=lambda x:(x[1],x[0]))
-    N=len(rows); HOLD=500; MINH=250
-    hold_start=N-HOLD
-    strategies=["RANDOM","HOT","COLD","RECENT30","MOMENTUM","GAP","SELFLAG","CROSSLAG","PAIRS","ENSEMBLE"]
-    predictions={m:[] for m in strategies}
-    actuals=[]
+    rows,errors,scanned=load()
+    if len(rows)<1000:raise SystemExit(f"Not enough data: {len(rows)}")
+    rows=sorted({r[0]:r for r in rows}.values(),key=lambda x:(x[1],x[0]));N=len(rows);H=min(500,N//5);M=min(250,N-H-1);split=N-H-M
+    preds={s:[] for s in STRATEGIES};actual=[]
     rng=random.Random(20261001)
-    for i in range(MINH,N):
-        hist=rows[:i]
-        actual=rows[i][2]
-        actuals.append(actual)
-        for m in strategies:
-            predictions[m].append(sorted(rng.sample(range(1,46),6)) if m=="RANDOM" else predict(hist,m))
-    # split predictions into development and final holdout
-    split=hold_start-MINH
-    dev_actual=actuals[:split]; hold_actual=actuals[split:]
-    dev={}; hold={}
-    for m in strategies:
-        dev[m]=sum(hit(predictions[m][i],dev_actual[i]) for i in range(split))/split
-        hold[m]=sum(hit(predictions[m][split+i],hold_actual[i]) for i in range(HOLD))/HOLD
-    hold_preds={m:predictions[m][split:] for m in strategies}
-    observed,p_mc=monte_carlo_max(hold_preds,hold_actual)
-    expected=.8
-    # block stability on holdout
-    blocks=[]
-    for b in range(0,HOLD,100):
-        block={}
-        for m in strategies:
-            block[m]=sum(hit(predictions[m][split+i],hold_actual[i]) for i in range(b,min(b+100,HOLD)))/(min(b+100,HOLD)-b)
-        blocks.append(block)
-    top=sorted(strategies,key=lambda m:-hold[m])
-    lines=[
-        "# Sportloto 6/45 — automated statistical report",
-        "",
-        f"Generated: {datetime.utcnow().isoformat(timespec='seconds')} UTC",
-        f"Draws analyzed: **{N}** | development: **{split}** predictions | final holdout: **{HOLD}** draws",
-        f"Draw range: **{rows[0][0]} → {rows[-1][0]}**",
-        "",
-        "## Main result",
-        "",
-        "Random 6/45 has an expected mean of **0.800 hits per 6-number ticket**.",
-        "",
-        "| Strategy | Development mean | Holdout mean | Holdout Δ vs 0.8 |",
-        "|---|---:|---:|---:|",
-    ]
-    for m in top:
-        lines.append(f"| {m} | {dev[m]:.3f} | {hold[m]:.3f} | {hold[m]-expected:+.3f} |")
-    lines += [
-        "",
-        "The final holdout was not used to choose the strategies. The Monte Carlo test uses the fixed holdout predictions and random 6/45 draws, while taking the **maximum across all tested strategies** to account for model selection.",
-        "",
-        f"Observed best holdout total: **{max(observed.values())} hits**.",
-        f"Monte Carlo max-over-strategies p-value: **{p_mc:.4f}** (5,000 simulations).",
-        "",
-        "## Holdout stability by 100-draw block",
-        "",
-        "| Block | " + " | ".join(strategies) + " |",
-        "|---|" + "|".join(["---"]*len(strategies)) + "|"
-    ]
-    for j,b in enumerate(blocks,1):
-        lines.append("| "+str(j)+" | "+" | ".join(f"{b[m]:.2f}" for m in strategies)+" |")
-    lines += [
-        "",
-        "## Data integrity",
-        "",
-        f"- Unique draws: **{N}**",
-        f"- Unique draw IDs: **{len(set(r[0] for r in rows))}**",
-        f"- Duplicate draw IDs removed: **{sum(1 for _ in [])}**",
-        f"- Fetch warnings: **{len(errors)}**",
-        "",
-        "## Interpretation",
-        "",
-        "This report tests whether historical patterns persist out of sample. A strategy beating 0.8 in one period is not sufficient evidence of predictability; the key checks are holdout performance, stability across blocks, and the multiple-strategy Monte Carlo test.",
-        "",
-    ]
-    if errors:
-        lines += ["### Fetch warnings"] + [f"- {e}" for e in errors] + [""]
-    REPORT.write_text("\n".join(lines),encoding="utf-8")
-    print("\n".join(lines))
-    print(f"REPORT={REPORT}")
+    for i in range(M,N):
+        h=rows[:i];actual.append(rows[i][2])
+        for s in STRATEGIES:preds[s].append(sorted(rng.sample(range(1,46),6)) if s=="RANDOM" else predict(h,s))
+    dev_actual=actual[:split];hold_actual=actual[split:]
+    dev={s:statistics.mean(hit(preds[s][i],dev_actual[i]) for i in range(split)) for s in STRATEGIES}
+    hold={s:statistics.mean(hit(preds[s][split+i],hold_actual[i]) for i in range(H)) for s in STRATEGIES}
+    hp={s:preds[s][split:] for s in STRATEGIES};obs,p=mc(hp,hold_actual)
+    freq=Counter(n for *_,ns in rows for n in ns); sums=[sum(ns) for *_,ns in rows]; overlaps=Counter(hit(rows[i-1][2],rows[i][2]) for i in range(1,N))
+    pairs=pair_counts(rows); triples=pair_counts(rows,True); lags=lag(rows); sl=self_lag(rows)
+    lines=[f"# Sportloto 6/45 — full-history analysis","",f"Generated: {datetime.utcnow().isoformat(timespec='seconds')} UTC",f"Draws: **{N}** | range: **{rows[0][0]} → {rows[-1][0]}** | archive months scanned: **{scanned}**","", "## Executive result","",f"Random expectation: **0.800 hits** per 6-number ticket.",f"Final holdout: **{H} draws**. Monte Carlo max-over-{len(STRATEGIES)}-strategies p-value: **{p:.4f}** (5,000 simulations).","", "## Walk-forward / holdout","", "| Strategy | Development | Holdout | Δ vs 0.8 |","|---|---:|---:|---:|"]
+    for s in sorted(STRATEGIES,key=lambda x:-hold[x]):lines.append(f"| {s} | {dev[s]:.3f} | {hold[s]:.3f} | {hold[s]-.8:+.3f} |")
+    lines += ["","## Holdout blocks (100 draws)","", "| Block | "+" | ".join(STRATEGIES)+" |","|---|"+"|".join(["---"]*len(STRATEGIES))+"|"]
+    for a in range(0,H,100):
+        b=min(a+100,H);lines.append("| "+f"{a+1}-{b}"+" | "+" | ".join(f"{statistics.mean(hit(hp[s][i],hold_actual[i]) for i in range(a,b)):.3f}" for s in STRATEGIES)+" |")
+    lines += ["","## Frequency windows","", "| Window | Top 10 |","|---|---|"]
+    for name,w in [("All",N),("5y",min(1825,N)),("3y",min(1095,N)),("1y",min(365,N)),("6m",min(183,N)),("3m",min(92,N))]:
+        f=Counter(n for *_,ns in rows[-w:] for n in ns);lines.append("| "+name+" | "+", ".join(f"{n}:{f[n]}" for n in f.most_common(10))+" |")
+    lines += ["","## Pairs / triples","",f"Expected count for one specific pair: **{N*15/990:.2f}**",f"Expected count for one specific triple: **{N*20/14190:.2f}**","", "**Top pairs:** "+", ".join(f"{k}:{v}" for k,v in pairs.most_common(20)),"","**Top triples:** "+", ".join(f"{k}:{v}" for k,v in triples.most_common(20)),"","## Sequential dependence","", "| Lag | Mean overlap | Δ vs 0.8 |","|---:|---:|---:|"]
+    for k,v in lags.items():lines.append(f"| {k} | {v:.4f} | {v-.8:+.4f} |")
+    lines += ["","### Strongest self-lag deviations (unadjusted)","", "| Number | P(repeat next draw) | N |","|---:|---:|---:|"]
+    for _,n,v,d in sl[:15]:lines.append(f"| {n} | {v:.4f} | {d} |")
+    lines += ["","## Distribution","",f"- Sum mean: **{statistics.mean(sums):.3f}**; median: **{statistics.median(sums):.1f}**; SD: **{statistics.pstdev(sums):.3f}**; range: **{min(sums)}–{max(sums)}**.",f"- Previous-draw overlap: {', '.join(f'{k}:{v} ({v/(N-1):.2%})' for k,v in sorted(overlaps.items()))}","", "## Data integrity", "",f"- Unique draw IDs: **{len({r[0] for r in rows})}**",f"- Fetch warnings: **{len(errors)}**","", "## Interpretation","", "Historical frequencies, pairs, triples and lag extremes are descriptive and vulnerable to multiple testing. The decisive evidence is chronological out-of-sample performance. The holdout was not used to select models, and the Monte Carlo test accounts for searching across multiple strategies.","","This is statistical research, not a guarantee of future lottery outcomes."]
+    REPORT.write_text("\n".join(lines)+"\n",encoding="utf-8")
+    SIGNALS.write_text("# Candidate signals\n\n"+"\n".join(f"- {s}: development {dev[s]:.3f}; holdout {hold[s]:.3f}; Δ vs random {hold[s]-.8:+.3f}" for s in sorted(STRATEGIES,key=lambda x:-(hold[x]-dev[x])))+"\n\nRaw pair/triple leaders are included in latest.md; they are not predictive claims.\n",encoding="utf-8")
+    print(f"REPORT={REPORT}\nSIGNALS={SIGNALS}\nDRAWS={N} WARNINGS={len(errors)}")
 
-if __name__=="__main__":
-    main()
+if __name__=="__main__":main()
