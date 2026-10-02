@@ -139,12 +139,19 @@ def self_lag(rows):
     return sorted(((abs(num[n]/den[n]-6/45),n,num[n]/den[n],den[n]) for n in den),reverse=True)
 
 def mc(preds,actuals,sims=5000):
-    rng=random.Random(20261001); names=list(preds); obs={m:sum(hit(preds[m][i],actuals[i]) for i in range(len(actuals))) for m in names}; best=max(obs.values());ge=0
+    rng=random.Random(20261001); names=list(preds)
+    masks={n:1<<(n-1) for n in range(1,46)}
+    pm={m:[sum(masks[n] for n in preds[m][i]) for i in range(len(actuals))] for m in names}
+    am=[sum(masks[n] for n in actuals[i]) for i in range(len(actuals))]
+    obs={m:sum((pm[m][i]&am[i]).bit_count() for i in range(len(actuals))) for m in names}
+    best=max(obs.values());ge=0
+    nums=range(1,46)
     for _ in range(sims):
         t={m:0 for m in names}
         for i in range(len(actuals)):
-            d=set(rng.sample(range(1,46),6))
-            for m in names:t[m]+=len(d&set(preds[m][i]))
+            d=0
+            for n in rng.sample(nums,6):d|=masks[n]
+            for m in names:t[m]+=(pm[m][i]&d).bit_count()
         ge+=max(t.values())>=best
     return obs,(ge+1)/(sims+1)
 
