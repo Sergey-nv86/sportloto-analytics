@@ -56,34 +56,64 @@ def load():
 
 def hit(a,b):return len(set(a)&set(b))
 
-def predict_all(h):
+def init_state(rows):
     cnt=Counter(); r30=Counter(); r100=Counter(); pos={n:-1 for n in range(1,46)}
     tr={n:[0,0] for n in range(1,46)}; pair=Counter()
-    for i,(*_,ns) in enumerate(h):
+    for i,(*_,ns) in enumerate(rows):
         for n in ns:
             cnt[n]+=1; pos[n]=i
-            if i>=len(h)-30:r30[n]+=1
-            if i>=len(h)-100:r100[n]+=1
+            if i>=len(rows)-30:r30[n]+=1
+            if i>=len(rows)-100:r100[n]+=1
         if i:
-            A=set(h[i-1][2]); B=set(ns)
+            A=set(rows[i-1][2]); B=set(ns)
             for n in A:
                 tr[n][0]+=1; tr[n][1]+=n in B
             for x in A:
                 for y in B:
                     if x!=y:pair[x,y]+=1
-    last=set(h[-1][2]); base={n:0.0 for n in range(1,46)}
+    return {
+        "cnt":cnt,"r30":r30,"r100":r100,"pos":pos,"tr":tr,"pair":pair,
+        "history_len":len(rows),"last":set(rows[-1][2]) if rows else set(),
+    }
+
+def advance_state(st, row):
+    i=st["history_len"]; ns=row[2]
+    if i>=30:
+        old=st["window30"]; 
+        for n in old:
+            st["r30"][n]-=1
+    if i>=100:
+        old=st["window100"]
+        for n in old:
+            st["r100"][n]-=1
+    A=st["last"]; B=set(ns)
+    if A:
+        for n in A:
+            st["tr"][n][0]+=1; st["tr"][n][1]+=n in B
+        for x in A:
+            for y in B:
+                if x!=y:st["pair"][x,y]+=1
+    for n in ns:
+        st["cnt"][n]+=1; st["pos"][n]=i; st["r30"][n]+=1; st["r100"][n]+=1
+    st["window30"]=B if i < 30 else st["window30_queue"].pop(0)
+    st["window30_queue"].append(B)
+    st["window100"]=B if i < 100 else st["window100_queue"].pop(0)
+    st["window100_queue"].append(B)
+    st["last"]=B; st["history_len"]=i+1
+
+def predict_state(st):
+    cnt=st["cnt"]; r30=st["r30"]; r100=st["r100"]; pos=st["pos"]; tr=st["tr"]; pair=st["pair"]; last=st["last"]
+    base=range(1,46)
     scores={}
     scores["HOT"]={n:cnt[n] for n in base}
     scores["COLD"]={n:-cnt[n] for n in base}
     scores["RECENT30"]={n:r30[n] for n in base}
     scores["MOMENTUM"]={n:r30[n]/30-r100[n]/100 for n in base}
-    scores["GAP"]={n:len(h)-1-pos[n] for n in base}
+    scores["GAP"]={n:st["history_len"]-1-pos[n] for n in base}
     scores["SELFLAG"]={n:(tr[n][1]/tr[n][0] if tr[n][0] else 6/45) for n in base}
     scores["CROSSLAG"]={n:statistics.mean([pair[x,n]/max(1,tr[n][0]) for x in last]) if last else 6/45 for n in base}
     scores["PAIRS"]={n:sum(pair[x,n] for x in last) for n in base}
-    preds={}
-    for s,sc in scores.items():
-        preds[s]=sorted(sc,key=lambda n:(-sc[n],n))[:6]
+    preds={s:sorted(sc,key=lambda n:(-sc[n],n))[:6] for s,sc in scores.items()}
     ens={n:sum((46-p.index(n)) if n in p else 0 for p in preds.values()) for n in base}
     preds["ENSEMBLE"]=sorted(ens,key=lambda n:(-ens[n],n))[:6]
     return preds
@@ -124,10 +154,16 @@ def main():
     rows=sorted({r[0]:r for r in rows}.values(),key=lambda x:(x[1],x[0]));N=len(rows);H=min(500,N//5);M=min(250,N-H-1);split=N-H-M
     preds={s:[] for s in STRATEGIES};actual=[]
     rng=random.Random(20261001)
+    st=init_state(rows[:M])
+    st["window30_queue"]=[set(r[2]) for r in rows[max(0,M-30):M]]
+    st["window100_queue"]=[set(r[2]) for r in rows[max(0,M-100):M]]
+    st["window30"]=st["window30_queue"][-1] if st["window30_queue"] else set()
+    st["window100"]=st["window100_queue"][-1] if st["window100_queue"] else set()
     for i in range(M,N):
-        h=rows[:i];actual.append(rows[i][2])
-        all_preds=predict_all(h)
+        actual.append(rows[i][2])
+        all_preds=predict_state(st)
         for s in STRATEGIES:preds[s].append(sorted(rng.sample(range(1,46),6)) if s=="RANDOM" else all_preds[s])
+        advance_state(st, rows[i])
     dev_actual=actual[:split];hold_actual=actual[split:]
     dev={s:statistics.mean(hit(preds[s][i],dev_actual[i]) for i in range(split)) for s in STRATEGIES}
     hold={s:statistics.mean(hit(preds[s][split+i],hold_actual[i]) for i in range(H)) for s in STRATEGIES}
