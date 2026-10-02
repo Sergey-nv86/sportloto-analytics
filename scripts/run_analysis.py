@@ -7,7 +7,7 @@ from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]; DATA=ROOT/"data/results.csv"; REPORT=ROOT/"reports/latest.md"; SIGNALS=ROOT/"reports/signals.md"
 DATA.parent.mkdir(parents=True,exist_ok=True); REPORT.parent.mkdir(parents=True,exist_ok=True)
 URL="http://russkoe-loto.com/sportloto6x45/arhiv-rezultatov/{:04d}/{:02d}"; UA="Mozilla/5.0 SportlotoResearch/2.0"
-STRATEGIES=["RANDOM","HOT","COLD","RECENT30","MOMENTUM","GAP","SELFLAG","CROSSLAG","PAIRS","ENSEMBLE"]
+STRATEGIES=["RANDOM","HOT","COLD","RECENT30","MOMENTUM","GAP","SELFLAG","CROSSLAG","PAIRS","LEARNED","ENSEMBLE"]
 
 def months(a,b):
     y,m=a
@@ -101,6 +101,41 @@ def advance_state(st, row):
     st["window100_queue"].append(B)
     st["last"]=B; st["history_len"]=i+1
 
+def sigmoid(x):
+    if x >= 35:return 1.0
+    if x <= -35:return 0.0
+    return 1.0/(1.0+math.exp(-x))
+
+def feature_vector(st,n):
+    h=max(1,st["history_len"])
+    cnt=st["cnt"]; r30=st["r30"]; r100=st["r100"]; pos=st["pos"]; tr=st["tr"]
+    gap=min(h-1,h-max(0,pos[n]))/h if pos[n]>=0 else 1.0
+    repeat=1.0 if n in st["last"] else 0.0
+    selfrate=tr[n][1]/tr[n][0] if tr[n][0] else 6/45
+    return [1.0,cnt[n]/h,r30[n]/30.0,r100[n]/100.0,gap,repeat,selfrate,(r30[n]/30.0-r100[n]/100.0)]
+
+def learn_update(st,row,lr=0.08):
+    w=st["learned_w"]; ns=set(row[2])
+    rate=lr/(1.0+0.00002*st["learned_steps"])
+    for n in range(1,46):
+        x=feature_vector(st,n); y=1.0 if n in ns else 0.0
+        p=sigmoid(sum(a*b for a,b in zip(w,x)))
+        err=p-y
+        for j,v in enumerate(x): w[j]-=rate*err*v
+    st["learned_steps"]+=1
+
+def train_initial_model(rows):
+    if len(rows)<2:return [0.0]*8
+    st=init_state(rows[:1])
+    st["window30_queue"]=[set(rows[0][2])]
+    st["window100_queue"]=[set(rows[0][2])]
+    st["window30"]=set(rows[0][2]); st["window100"]=set(rows[0][2])
+    st["learned_w"]=[0.0]*8; st["learned_steps"]=0
+    for row in rows[1:]:
+        learn_update(st,row)
+        advance_state(st,row)
+    return st["learned_w"]
+
 def predict_state(st):
     cnt=st["cnt"]; r30=st["r30"]; r100=st["r100"]; pos=st["pos"]; tr=st["tr"]; pair=st["pair"]; last=st["last"]
     base=range(1,46)
@@ -113,6 +148,7 @@ def predict_state(st):
     scores["SELFLAG"]={n:(tr[n][1]/tr[n][0] if tr[n][0] else 6/45) for n in base}
     scores["CROSSLAG"]={n:statistics.mean([pair[x,n]/max(1,tr[n][0]) for x in last]) if last else 6/45 for n in base}
     scores["PAIRS"]={n:sum(pair[x,n] for x in last) for n in base}
+    scores["LEARNED"]={n:sum(a*b for a,b in zip(st["learned_w"],feature_vector(st,n))) for n in base}
     preds={s:sorted(sc,key=lambda n:(-sc[n],n))[:6] for s,sc in scores.items()}
     ens={n:sum((46-p.index(n)) if n in p else 0 for p in preds.values()) for n in base}
     preds["ENSEMBLE"]=sorted(ens,key=lambda n:(-ens[n],n))[:6]
@@ -162,6 +198,8 @@ def main():
     preds={s:[] for s in STRATEGIES};actual=[]
     rng=random.Random(20261001)
     st=init_state(rows[:M])
+    st["learned_w"]=train_initial_model(rows[:M])
+    st["learned_steps"]=max(0,M-1)
     st["window30_queue"]=[set(r[2]) for r in rows[max(0,M-30):M]]
     st["window100_queue"]=[set(r[2]) for r in rows[max(0,M-100):M]]
     st["window30"]=st["window30_queue"][-1] if st["window30_queue"] else set()
@@ -170,6 +208,7 @@ def main():
         actual.append(rows[i][2])
         all_preds=predict_state(st)
         for s in STRATEGIES:preds[s].append(sorted(rng.sample(range(1,46),6)) if s=="RANDOM" else all_preds[s])
+        learn_update(st, rows[i])
         advance_state(st, rows[i])
     dev_actual=actual[:split];hold_actual=actual[split:]
     dev={s:statistics.mean(hit(preds[s][i],dev_actual[i]) for i in range(split)) for s in STRATEGIES}
@@ -189,7 +228,7 @@ def main():
     for k,v in lags.items():lines.append(f"| {k} | {v:.4f} | {v-.8:+.4f} |")
     lines += ["","### Strongest self-lag deviations (unadjusted)","", "| Number | P(repeat next draw) | N |","|---:|---:|---:|"]
     for _,n,v,d in sl[:15]:lines.append(f"| {n} | {v:.4f} | {d} |")
-    lines += ["","## Distribution","",f"- Sum mean: **{statistics.mean(sums):.3f}**; median: **{statistics.median(sums):.1f}**; SD: **{statistics.pstdev(sums):.3f}**; range: **{min(sums)}–{max(sums)}**.",f"- Previous-draw overlap: {', '.join(f'{k}:{v} ({v/(N-1):.2%})' for k,v in sorted(overlaps.items()))}","", "## Data integrity", "",f"- Unique draw IDs: **{len({r[0] for r in rows})}**",f"- Fetch warnings: **{len(errors)}**","", "## Interpretation","", "Historical frequencies, pairs, triples and lag extremes are descriptive and vulnerable to multiple testing. The decisive evidence is chronological out-of-sample performance. The holdout was not used to select models, and the Monte Carlo test accounts for searching across multiple strategies.","","This is statistical research, not a guarantee of future lottery outcomes."]
+    lines += ["","## Distribution","",f"- Sum mean: **{statistics.mean(sums):.3f}**; median: **{statistics.median(sums):.1f}**; SD: **{statistics.pstdev(sums):.3f}**; range: **{min(sums)}–{max(sums)}**.",f"- Previous-draw overlap: {', '.join(f'{k}:{v} ({v/(N-1):.2%})' for k,v in sorted(overlaps.items()))}","", "## Data integrity", "",f"- Unique draw IDs: **{len({r[0] for r in rows})}**",f"- Fetch warnings: **{len(errors)}**","", "## Interpretation","", "The LEARNED strategy is an online logistic model trained only on information available before each draw; its weights are updated after the observed draw. It is included as an experimental model, not as evidence that lottery outcomes are predictable. Historical frequencies, pairs, triples and lag extremes are descriptive and vulnerable to multiple testing. The decisive evidence is chronological out-of-sample performance. The holdout was not used to select models, and the Monte Carlo test accounts for searching across multiple strategies.","","This is statistical research, not a guarantee of future lottery outcomes."]
     REPORT.write_text("\n".join(lines)+"\n",encoding="utf-8")
     SIGNALS.write_text("# Candidate signals\n\n"+"\n".join(f"- {s}: development {dev[s]:.3f}; holdout {hold[s]:.3f}; Δ vs random {hold[s]-.8:+.3f}" for s in sorted(STRATEGIES,key=lambda x:-(hold[x]-dev[x])))+"\n\nRaw pair/triple leaders are included in latest.md; they are not predictive claims.\n",encoding="utf-8")
     print(f"REPORT={REPORT}\nSIGNALS={SIGNALS}\nDRAWS={N} WARNINGS={len(errors)}")
