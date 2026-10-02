@@ -22,3 +22,5 @@ See [reports/latest.md](reports/latest.md).
 ```bash
 python3 scripts/run_analysis.py
 ```
+
+<!-- analysis verification trigger: 2026-10-02 -->
