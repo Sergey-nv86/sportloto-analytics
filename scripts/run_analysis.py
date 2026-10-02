@@ -84,7 +84,7 @@ def predict(h,s):
         ms=["HOT","COLD","RECENT30","MOMENTUM","GAP","SELFLAG","PAIRS"]; mats=[]
         for m in ms:
             p=predict(h,m);mats.append({n:46-i for i,n in enumerate(p)})
-        sc={n:sum(z[n] for z in mats) for n in sc}
+        sc={n:sum(z.get(n,0) for z in mats) for n in sc}
     return sorted(sc,key=lambda n:(-sc[n],n))[:6]
 
 def pair_counts(rows,triples=False):
