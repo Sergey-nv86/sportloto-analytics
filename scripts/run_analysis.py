@@ -56,36 +56,37 @@ def load():
 
 def hit(a,b):return len(set(a)&set(b))
 
-def predict(h,s):
-    cnt=Counter(n for *_,ns in h for n in ns); r30=Counter(n for *_,ns in h[-30:] for n in ns); r100=Counter(n for *_,ns in h[-100:] for n in ns)
-    sc={n:0.0 for n in range(1,46)}; last=set(h[-1][2])
-    if s=="HOT":sc={n:cnt[n] for n in sc}
-    elif s=="COLD":sc={n:-cnt[n] for n in sc}
-    elif s=="RECENT30":sc={n:r30[n] for n in sc}
-    elif s=="MOMENTUM":sc={n:r30[n]/30-r100[n]/100 for n in sc}
-    elif s=="GAP":
-        pos={n:-1 for n in sc}
-        for i,(*_,ns) in enumerate(h):
-            for n in ns:pos[n]=i
-        sc={n:len(h)-1-pos[n] for n in sc}
-    elif s in ("SELFLAG","CROSSLAG","PAIRS"):
-        tr=defaultdict(lambda:[0,0]);pair=Counter()
-        for a,b in zip(h,h[1:]):
-            A=set(a[2]);B=set(b[2])
-            for n in A:tr[n][0]+=1;tr[n][1]+=n in B
+def predict_all(h):
+    cnt=Counter(); r30=Counter(); r100=Counter(); pos={n:-1 for n in range(1,46)}
+    tr={n:[0,0] for n in range(1,46)}; pair=Counter()
+    for i,(*_,ns) in enumerate(h):
+        for n in ns:
+            cnt[n]+=1; pos[n]=i
+            if i>=len(h)-30:r30[n]+=1
+            if i>=len(h)-100:r100[n]+=1
+        if i:
+            A=set(h[i-1][2]); B=set(ns)
+            for n in A:
+                tr[n][0]+=1; tr[n][1]+=n in B
             for x in A:
                 for y in B:
                     if x!=y:pair[x,y]+=1
-        if s=="SELFLAG":sc={n:(tr[n][1]/tr[n][0] if tr[n][0] else 6/45) for n in sc}
-        elif s=="CROSSLAG":
-            sc={n:statistics.mean([pair[x,n]/max(1,tr[n][0]) for x in last]) if last else 6/45 for n in sc}
-        else:sc={n:sum(pair[x,n] for x in last) for n in sc}
-    elif s=="ENSEMBLE":
-        ms=["HOT","COLD","RECENT30","MOMENTUM","GAP","SELFLAG","PAIRS"]; mats=[]
-        for m in ms:
-            p=predict(h,m);mats.append({n:46-i for i,n in enumerate(p)})
-        sc={n:sum(z.get(n,0) for z in mats) for n in sc}
-    return sorted(sc,key=lambda n:(-sc[n],n))[:6]
+    last=set(h[-1][2]); base={n:0.0 for n in range(1,46)}
+    scores={}
+    scores["HOT"]={n:cnt[n] for n in base}
+    scores["COLD"]={n:-cnt[n] for n in base}
+    scores["RECENT30"]={n:r30[n] for n in base}
+    scores["MOMENTUM"]={n:r30[n]/30-r100[n]/100 for n in base}
+    scores["GAP"]={n:len(h)-1-pos[n] for n in base}
+    scores["SELFLAG"]={n:(tr[n][1]/tr[n][0] if tr[n][0] else 6/45) for n in base}
+    scores["CROSSLAG"]={n:statistics.mean([pair[x,n]/max(1,tr[n][0]) for x in last]) if last else 6/45 for n in base}
+    scores["PAIRS"]={n:sum(pair[x,n] for x in last) for n in base}
+    preds={}
+    for s,sc in scores.items():
+        preds[s]=sorted(sc,key=lambda n:(-sc[n],n))[:6]
+    ens={n:sum((46-p.index(n)) if n in p else 0 for p in preds.values()) for n in base}
+    preds["ENSEMBLE"]=sorted(ens,key=lambda n:(-ens[n],n))[:6]
+    return preds
 
 def pair_counts(rows,triples=False):
     c=Counter()
@@ -125,7 +126,8 @@ def main():
     rng=random.Random(20261001)
     for i in range(M,N):
         h=rows[:i];actual.append(rows[i][2])
-        for s in STRATEGIES:preds[s].append(sorted(rng.sample(range(1,46),6)) if s=="RANDOM" else predict(h,s))
+        all_preds=predict_all(h)
+        for s in STRATEGIES:preds[s].append(sorted(rng.sample(range(1,46),6)) if s=="RANDOM" else all_preds[s])
     dev_actual=actual[:split];hold_actual=actual[split:]
     dev={s:statistics.mean(hit(preds[s][i],dev_actual[i]) for i in range(split)) for s in STRATEGIES}
     hold={s:statistics.mean(hit(preds[s][split+i],hold_actual[i]) for i in range(H)) for s in STRATEGIES}
