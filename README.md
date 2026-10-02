@@ -23,4 +23,4 @@ See [reports/latest.md](reports/latest.md).
 python3 scripts/run_analysis.py
 ```
 
-<!-- analysis verification trigger: 2026-10-02 -->
+<!-- analysis verification trigger: 2026-10-02-1233 -->
