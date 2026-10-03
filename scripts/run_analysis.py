@@ -7,7 +7,7 @@ from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]; DATA=ROOT/"data/results.csv"; REPORT=ROOT/"reports/latest.md"; SIGNALS=ROOT/"reports/signals.md"
 DATA.parent.mkdir(parents=True,exist_ok=True); REPORT.parent.mkdir(parents=True,exist_ok=True)
 URL="http://russkoe-loto.com/sportloto6x45/arhiv-rezultatov/{:04d}/{:02d}"; UA="Mozilla/5.0 SportlotoResearch/2.0"
-DEFAULT_STRATEGIES=["RANDOM","HOT","COLD","RECENT30","MOMENTUM","GAP","SELFLAG","CROSSLAG","PAIRS","LEARNED","ENSEMBLE"]
+DEFAULT_STRATEGIES=["RANDOM","HOT","COLD","RECENT30","MOMENTUM","GAP","SELFLAG","CROSSLAG","PAIRS","LEARNED","LEARNED_EWMA","ENSEMBLE"]
 STRATEGIES=[x for x in os.environ.get("STRATEGIES","RANDOM,HOT,COLD,RECENT30,MOMENTUM,GAP,SELFLAG,CROSSLAG,PAIRS,LEARNED,ENSEMBLE").split(",") if x]
 
 def months(a,b):
@@ -115,27 +115,33 @@ def feature_vector(st,n):
     selfrate=tr[n][1]/tr[n][0] if tr[n][0] else 6/45
     return [1.0,cnt[n]/h,r30[n]/30.0,r100[n]/100.0,gap,repeat,selfrate,(r30[n]/30.0-r100[n]/100.0)]
 
-def learn_update(st,row,lr=0.08):
-    w=st["learned_w"]; ns=set(row[2])
+def feature_vector_ewma(st,n):
+    h=max(1,st["history_len"]); cnt=st["cnt"]; r30=st["r30"]; r100=st["r100"]; pos=st["pos"]
+    gap=min(h-1,h-max(0,pos[n]))/h if pos[n]>=0 else 1.0
+    return [1.0,cnt[n]/h,r30[n]/30.0,r100[n]/100.0,gap,1.0 if n in st["last"] else 0.0,
+            r30[n]/30.0-r100[n]/100.0,r30[n]/30.0]
+
+def learn_update(st,row,lr=0.08,weights_key="learned_w",feature_fn=feature_vector):
+    w=st[weights_key]; ns=set(row[2])
     rate=lr/(1.0+0.00002*st["learned_steps"])
     for n in range(1,46):
-        x=feature_vector(st,n); y=1.0 if n in ns else 0.0
+        x=feature_fn(st,n); y=1.0 if n in ns else 0.0
         p=sigmoid(sum(a*b for a,b in zip(w,x)))
         err=p-y
         for j,v in enumerate(x): w[j]-=rate*err*v
     st["learned_steps"]+=1
 
-def train_initial_model(rows):
-    if len(rows)<2:return [0.0]*8
+def train_initial_model(rows,weights_key="learned_w",feature_fn=feature_vector):
+    if len(rows)<2:return [0.0]*len(feature_fn(init_state(rows[:1]),1))
     st=init_state(rows[:1])
     st["window30_queue"]=[set(rows[0][2])]
     st["window100_queue"]=[set(rows[0][2])]
     st["window30"]=set(rows[0][2]); st["window100"]=set(rows[0][2])
-    st["learned_w"]=[0.0]*8; st["learned_steps"]=0
+    st[weights_key]=[0.0]*len(feature_fn(st,1)); st["learned_steps"]=0
     for row in rows[1:]:
-        learn_update(st,row)
+        learn_update(st,row,weights_key=weights_key,feature_fn=feature_fn)
         advance_state(st,row)
-    return st["learned_w"]
+    return st[weights_key]
 
 def predict_state(st,wanted=None):
     wanted=set(wanted or STRATEGIES)
@@ -151,6 +157,7 @@ def predict_state(st,wanted=None):
     if "CROSSLAG" in wanted:scores["CROSSLAG"]={n:statistics.mean([pair[x,n]/max(1,tr[n][0]) for x in last]) if last else 6/45 for n in base}
     if "PAIRS" in wanted:scores["PAIRS"]={n:sum(pair[x,n] for x in last) for n in base}
     if "LEARNED" in wanted:scores["LEARNED"]={n:sum(a*b for a,b in zip(st["learned_w"],feature_vector(st,n))) for n in base}
+    if "LEARNED_EWMA" in wanted:scores["LEARNED_EWMA"]={n:sum(a*b for a,b in zip(st["learned_ewma_w"],feature_vector_ewma(st,n))) for n in base}
     return {s:sorted(sc,key=lambda n:(-sc[n],n))[:6] for s,sc in scores.items()}
 
 def pair_counts(rows,triples=False):
@@ -202,11 +209,12 @@ def main():
     else:
         rows,errors,scanned=load()
     if len(rows)<1000:raise SystemExit(f"Not enough data: {len(rows)}")
-    rows=sorted({r[0]:r for r in rows}.values(),key=lambda x:(x[1],x[0]));N=len(rows);H=min(500,N//5);M=min(250,N-H-1);split=N-H-M
+    rows=sorted({r[0]:r for r in rows}.values(),key=lambda x:(x[1],x[0]));N=len(rows);H=min(2500,N//5);M=min(250,N-H-1);split=N-H-M
     preds={s:[] for s in STRATEGIES};actual=[]
     rng=random.Random(20261001)
     st=init_state(rows[:M])
-    st["learned_w"]=train_initial_model(rows[:M])
+    if "LEARNED" in STRATEGIES: st["learned_w"]=train_initial_model(rows[:M],"learned_w",feature_vector)
+    if "LEARNED_EWMA" in STRATEGIES: st["learned_ewma_w"]=train_initial_model(rows[:M],"learned_ewma_w",feature_vector_ewma)
     st["learned_steps"]=max(0,M-1)
     st["window30_queue"]=[set(r[2]) for r in rows[max(0,M-30):M]]
     st["window100_queue"]=[set(r[2]) for r in rows[max(0,M-100):M]]
@@ -216,7 +224,8 @@ def main():
         actual.append(rows[i][2])
         all_preds=predict_state(st)
         for s in STRATEGIES:preds[s].append(sorted(rng.sample(range(1,46),6)) if s=="RANDOM" else all_preds[s])
-        learn_update(st, rows[i])
+        if "LEARNED" in STRATEGIES: learn_update(st, rows[i],weights_key="learned_w",feature_fn=feature_vector)
+        if "LEARNED_EWMA" in STRATEGIES: learn_update(st, rows[i],weights_key="learned_ewma_w",feature_fn=feature_vector_ewma)
         advance_state(st, rows[i])
     if os.environ.get("BATCH_OUT"):
         out=Path(os.environ["BATCH_OUT"]); out.parent.mkdir(parents=True,exist_ok=True)
