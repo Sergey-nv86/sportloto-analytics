@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 import csv,json,random,statistics
 from pathlib import Path
-from scripts.run_analysis import hit
+import sys\nfrom pathlib import Path\nsys.path.insert(0,str(Path(__file__).resolve().parent))\nfrom run_analysis import hit
 ROOT=Path(__file__).resolve().parents[1]; DATA=ROOT/"data/results.csv"; REPORT=ROOT/"reports/latest.md"; SIGNALS=ROOT/"reports/signals.md"
 ALL=["RANDOM","HOT","COLD","RECENT30","MOMENTUM","GAP","SELFLAG","CROSSLAG","PAIRS","LEARNED"]
 def rows():
