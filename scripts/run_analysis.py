@@ -58,7 +58,7 @@ def load():
 def hit(a,b):return len(set(a)&set(b))
 
 def init_state(rows):
-    cnt=Counter(); r30=Counter(); r100=Counter(); pos={n:-1 for n in range(1,46)}
+    cnt=Counter(); r7=Counter(); r15=Counter(); r30=Counter(); r60=Counter(); r100=Counter(); pos={n:-1 for n in range(1,46)}
     tr={n:[0,0] for n in range(1,46)}; pair=Counter()
     for i,(*_,ns) in enumerate(rows):
         for n in ns:
@@ -73,20 +73,17 @@ def init_state(rows):
                 for y in B:
                     if x!=y:pair[x,y]+=1
     return {
-        "cnt":cnt,"r30":r30,"r100":r100,"pos":pos,"tr":tr,"pair":pair,
+        "cnt":cnt,"r7":r7,"r15":r15,"r30":r30,"r60":r60,"r100":r100,"pos":pos,"tr":tr,"pair":pair,
         "history_len":len(rows),"last":set(rows[-1][2]) if rows else set(),
     }
 
 def advance_state(st, row):
     i=st["history_len"]; ns=row[2]
-    if i>=30:
-        old=st["window30"]; 
-        for n in old:
-            st["r30"][n]-=1
-    if i>=100:
-        old=st["window100"]
-        for n in old:
-            st["r100"][n]-=1
+    for w in (7,15,30,60,100):
+        if i>=w:
+            old=st[f"window{w}"]
+            for n in old:
+                st[f"r{w}"][n]-=1
     A=st["last"]; B=set(ns)
     if A:
         for n in A:
@@ -96,10 +93,9 @@ def advance_state(st, row):
                 if x!=y:st["pair"][x,y]+=1
     for n in ns:
         st["cnt"][n]+=1; st["pos"][n]=i; st["r30"][n]+=1; st["r100"][n]+=1
-    st["window30"]=B if i < 30 else st["window30_queue"].pop(0)
-    st["window30_queue"].append(B)
-    st["window100"]=B if i < 100 else st["window100_queue"].pop(0)
-    st["window100_queue"].append(B)
+    for w in (7,15,30,60,100):
+        st[f"window{w}"]=B if i < w else st[f"window{w}_queue"].pop(0)
+        st[f"window{w}_queue"].append(B)
     st["last"]=B; st["history_len"]=i+1
 
 def sigmoid(x):
@@ -116,10 +112,10 @@ def feature_vector(st,n):
     return [1.0,cnt[n]/h,r30[n]/30.0,r100[n]/100.0,gap,repeat,selfrate,(r30[n]/30.0-r100[n]/100.0)]
 
 def feature_vector_ewma(st,n):
-    h=max(1,st["history_len"]); cnt=st["cnt"]; r30=st["r30"]; r100=st["r100"]; pos=st["pos"]
+    h=max(1,st["history_len"]); pos=st["pos"]
     gap=min(h-1,h-max(0,pos[n]))/h if pos[n]>=0 else 1.0
-    return [1.0,cnt[n]/h,r30[n]/30.0,r100[n]/100.0,gap,1.0 if n in st["last"] else 0.0,
-            r30[n]/30.0-r100[n]/100.0,r30[n]/30.0]
+    return [1.0,st["cnt"][n]/h,st["r7"][n]/7.0,st["r15"][n]/15.0,st["r30"][n]/30.0,
+            st["r60"][n]/60.0,st["r100"][n]/100.0,gap,1.0 if n in st["last"] else 0.0]
 
 def learn_update(st,row,lr=0.08,weights_key="learned_w",feature_fn=feature_vector):
     w=st[weights_key]; ns=set(row[2])
@@ -134,9 +130,9 @@ def learn_update(st,row,lr=0.08,weights_key="learned_w",feature_fn=feature_vecto
 def train_initial_model(rows,weights_key="learned_w",feature_fn=feature_vector):
     if len(rows)<2:return [0.0]*len(feature_fn(init_state(rows[:1]),1))
     st=init_state(rows[:1])
-    st["window30_queue"]=[set(rows[0][2])]
-    st["window100_queue"]=[set(rows[0][2])]
-    st["window30"]=set(rows[0][2]); st["window100"]=set(rows[0][2])
+    for w in (7,15,30,60,100):
+        st[f"window{w}_queue"]=[set(rows[0][2])]
+        st[f"window{w}"]=set(rows[0][2])
     st[weights_key]=[0.0]*len(feature_fn(st,1)); st["learned_steps"]=0
     for row in rows[1:]:
         learn_update(st,row,weights_key=weights_key,feature_fn=feature_fn)
@@ -216,10 +212,9 @@ def main():
     if "LEARNED" in STRATEGIES: st["learned_w"]=train_initial_model(rows[:M],"learned_w",feature_vector)
     if "LEARNED_EWMA" in STRATEGIES: st["learned_ewma_w"]=train_initial_model(rows[:M],"learned_ewma_w",feature_vector_ewma)
     st["learned_steps"]=max(0,M-1)
-    st["window30_queue"]=[set(r[2]) for r in rows[max(0,M-30):M]]
-    st["window100_queue"]=[set(r[2]) for r in rows[max(0,M-100):M]]
-    st["window30"]=st["window30_queue"][-1] if st["window30_queue"] else set()
-    st["window100"]=st["window100_queue"][-1] if st["window100_queue"] else set()
+    for w in (7,15,30,60,100):
+        st[f"window{w}_queue"]=[set(r[2]) for r in rows[max(0,M-w):M]]
+        st[f"window{w}"]=st[f"window{w}_queue"][-1] if st[f"window{w}_queue"] else set()
     for i in range(M,N):
         actual.append(rows[i][2])
         all_preds=predict_state(st)
