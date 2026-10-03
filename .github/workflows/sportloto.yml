@@ -1,5 +1,4 @@
 name: Sportloto analytics
-
 on:
   workflow_dispatch:
   push:
@@ -7,25 +6,81 @@ on:
     paths-ignore:
       - "data/**"
       - "reports/**"
-  schedule:
-    - cron: "*/5 * * * *"
-
 permissions:
   contents: write
-
 jobs:
-  analyze:
+  prepare:
     runs-on: ubuntu-latest
     timeout-minutes: 120
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-      - name: Setup Python
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Run full-history statistical pipeline
+      - name: Prepare full-history dataset
+        run: python scripts/prepare_data.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sportloto-data
+          path: data/results.csv
+  batch:
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        include:
+          - name: baseline
+            strategies: RANDOM,HOT,COLD,RECENT30
+          - name: structural
+            strategies: MOMENTUM,GAP,SELFLAG
+          - name: pairwise
+            strategies: CROSSLAG,PAIRS
+          - name: learned
+            strategies: LEARNED
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Download prepared dataset
+        uses: actions/download-artifact@v5
+        with:
+          name: sportloto-data
+          path: data
+      - name: Run isolated model batch
+        env:
+          SKIP_LOAD: "1"
+          STRATEGIES: ${{ matrix.strategies }}
+          BATCH_NAME: ${{ matrix.name }}
+          BATCH_OUT: reports/batch_${{ matrix.name }}.json
         run: python scripts/run_analysis.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sportloto-batch-${{ matrix.name }}
+          path: reports/batch_${{ matrix.name }}.json
+  aggregate:
+    needs: batch
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@v5
+        with:
+          name: sportloto-data
+          path: data
+      - uses: actions/download-artifact@v5
+        with:
+          pattern: sportloto-batch-*
+          path: reports
+          merge-multiple: true
+      - name: Aggregate batches
+        run: python scripts/aggregate_batches.py
       - name: Commit updated data and reports
         run: |
           git config user.name "github-actions[bot]"
@@ -33,8 +88,7 @@ jobs:
           git add data/results.csv reports/latest.md reports/signals.md
           git diff --cached --quiet || git commit -m "chore: update full-history Sportloto analysis"
           git push
-      - name: Upload full report
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: sportloto-full-report
           path: |
