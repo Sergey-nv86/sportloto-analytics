@@ -43,7 +43,7 @@ jobs:
           - name: pairwise
             strategies: CROSSLAG,PAIRS
           - name: learned
-            strategies: LEARNED
+            strategies: LEARNED,LEARNED_EWMA
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
