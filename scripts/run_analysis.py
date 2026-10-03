@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import csv, math, random, re, ssl, statistics, urllib.request, time
+import csv, json, math, os, random, re, ssl, statistics, urllib.request, time
 from collections import Counter, defaultdict
 from datetime import datetime
 from pathlib import Path
@@ -136,23 +136,21 @@ def train_initial_model(rows):
         advance_state(st,row)
     return st["learned_w"]
 
-def predict_state(st):
+def predict_state(st,wanted=None):
+    wanted=set(wanted or STRATEGIES)
     cnt=st["cnt"]; r30=st["r30"]; r100=st["r100"]; pos=st["pos"]; tr=st["tr"]; pair=st["pair"]; last=st["last"]
     base=range(1,46)
     scores={}
-    scores["HOT"]={n:cnt[n] for n in base}
-    scores["COLD"]={n:-cnt[n] for n in base}
-    scores["RECENT30"]={n:r30[n] for n in base}
-    scores["MOMENTUM"]={n:r30[n]/30-r100[n]/100 for n in base}
-    scores["GAP"]={n:st["history_len"]-1-pos[n] for n in base}
-    scores["SELFLAG"]={n:(tr[n][1]/tr[n][0] if tr[n][0] else 6/45) for n in base}
-    scores["CROSSLAG"]={n:statistics.mean([pair[x,n]/max(1,tr[n][0]) for x in last]) if last else 6/45 for n in base}
-    scores["PAIRS"]={n:sum(pair[x,n] for x in last) for n in base}
-    scores["LEARNED"]={n:sum(a*b for a,b in zip(st["learned_w"],feature_vector(st,n))) for n in base}
-    preds={s:sorted(sc,key=lambda n:(-sc[n],n))[:6] for s,sc in scores.items()}
-    ens={n:sum((46-p.index(n)) if n in p else 0 for p in preds.values()) for n in base}
-    preds["ENSEMBLE"]=sorted(ens,key=lambda n:(-ens[n],n))[:6]
-    return preds
+    if "HOT" in wanted:scores["HOT"]={n:cnt[n] for n in base}
+    if "COLD" in wanted:scores["COLD"]={n:-cnt[n] for n in base}
+    if "RECENT30" in wanted:scores["RECENT30"]={n:r30[n] for n in base}
+    if "MOMENTUM" in wanted:scores["MOMENTUM"]={n:r30[n]/30-r100[n]/100 for n in base}
+    if "GAP" in wanted:scores["GAP"]={n:st["history_len"]-1-pos[n] for n in base}
+    if "SELFLAG" in wanted:scores["SELFLAG"]={n:(tr[n][1]/tr[n][0] if tr[n][0] else 6/45) for n in base}
+    if "CROSSLAG" in wanted:scores["CROSSLAG"]={n:statistics.mean([pair[x,n]/max(1,tr[n][0]) for x in last]) if last else 6/45 for n in base}
+    if "PAIRS" in wanted:scores["PAIRS"]={n:sum(pair[x,n] for x in last) for n in base}
+    if "LEARNED" in wanted:scores["LEARNED"]={n:sum(a*b for a,b in zip(st["learned_w"],feature_vector(st,n))) for n in base}
+    return {s:sorted(sc,key=lambda n:(-sc[n],n))[:6] for s,sc in scores.items()}
 
 def pair_counts(rows,triples=False):
     c=Counter()
@@ -194,7 +192,14 @@ def mc(preds,actuals,sims=1200):
     return obs,(ge+1)/(sims+1)
 
 def main():
-    rows,errors,scanned=load()
+    if os.environ.get("SKIP_LOAD"):
+        rows=[]
+        with DATA.open(encoding="utf-8",newline="") as f:
+            for r in csv.DictReader(f):
+                rows.append((int(r["draw"]),r["datetime"],tuple(sorted(int(r[f"n{i}"]) for i in range(1,7)))))
+        rows=sorted(rows,key=lambda x:(x[1],x[0])); errors=[]; scanned=0
+    else:
+        rows,errors,scanned=load()
     if len(rows)<1000:raise SystemExit(f"Not enough data: {len(rows)}")
     rows=sorted({r[0]:r for r in rows}.values(),key=lambda x:(x[1],x[0]));N=len(rows);H=min(500,N//5);M=min(250,N-H-1);split=N-H-M
     preds={s:[] for s in STRATEGIES};actual=[]
@@ -212,6 +217,10 @@ def main():
         for s in STRATEGIES:preds[s].append(sorted(rng.sample(range(1,46),6)) if s=="RANDOM" else all_preds[s])
         learn_update(st, rows[i])
         advance_state(st, rows[i])
+    if os.environ.get("BATCH_OUT"):
+        out=Path(os.environ["BATCH_OUT"]); out.parent.mkdir(parents=True,exist_ok=True)
+        payload={"batch":os.environ.get("BATCH_NAME","batch"),"strategies":STRATEGIES,"draws":N,"holdout":H,"split":split,"dev":{s:statistics.mean(hit(preds[s][i],actual[i]) for i in range(split)) for s in STRATEGIES},"hold":{s:statistics.mean(hit(preds[s][split+i],actual[split+i]) for i in range(H)) for s in STRATEGIES},"hold_actual":actual[split:],"hold_preds":{s:preds[s][split:] for s in STRATEGIES}}
+        out.write_text(json.dumps(payload),encoding="utf-8"); print(f"BATCH={payload['batch']} DRAWS={N} HOLDOUT={H}"); return
     dev_actual=actual[:split];hold_actual=actual[split:]
     dev={s:statistics.mean(hit(preds[s][i],dev_actual[i]) for i in range(split)) for s in STRATEGIES}
     hold={s:statistics.mean(hit(preds[s][split+i],hold_actual[i]) for i in range(H)) for s in STRATEGIES}
