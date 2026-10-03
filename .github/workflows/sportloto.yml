@@ -8,7 +8,7 @@ on:
       - "data/**"
       - "reports/**"
   schedule:
-    - cron: "15 1 * * *"
+    - cron: "*/5 * * * *"
 
 permissions:
   contents: write
