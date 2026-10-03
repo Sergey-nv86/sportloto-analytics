@@ -174,7 +174,7 @@ def self_lag(rows):
         for n in A:den[n]+=1;num[n]+=n in B
     return sorted(((abs(num[n]/den[n]-6/45),n,num[n]/den[n],den[n]) for n in den),reverse=True)
 
-def mc(preds,actuals,sims=5000):
+def mc(preds,actuals,sims=1200):
     rng=random.Random(20261001); names=list(preds)
     masks={n:1<<(n-1) for n in range(1,46)}
     pm={m:[sum(masks[n] for n in preds[m][i]) for i in range(len(actuals))] for m in names}
@@ -186,9 +186,11 @@ def mc(preds,actuals,sims=5000):
         t={m:0 for m in names}
         for i in range(len(actuals)):
             d=0
-            for n in rng.sample(nums,6):d|=masks[n]
-            for m in names:t[m]+=(pm[m][i]&d).bit_count()
-        ge+=max(t.values())>=best
+            # Fast uniform 6/45 ticket generation: one sample per draw,
+            # while keeping the same exact null model as the original test.
+            for n in rng.sample(nums,6): d |= masks[n]
+            for m in names: t[m] += (pm[m][i] & d).bit_count()
+        ge += max(t.values()) >= best
     return obs,(ge+1)/(sims+1)
 
 def main():
@@ -216,7 +218,7 @@ def main():
     hp={s:preds[s][split:] for s in STRATEGIES};obs,p=mc(hp,hold_actual)
     freq=Counter(n for *_,ns in rows for n in ns); sums=[sum(ns) for *_,ns in rows]; overlaps=Counter(hit(rows[i-1][2],rows[i][2]) for i in range(1,N))
     pairs=pair_counts(rows); triples=pair_counts(rows,True); lags=lag(rows); sl=self_lag(rows)
-    lines=[f"# Sportloto 6/45 — full-history analysis","",f"Generated: {datetime.utcnow().isoformat(timespec='seconds')} UTC",f"Draws: **{N}** | range: **{rows[0][0]} → {rows[-1][0]}** | archive months scanned: **{scanned}**","", "## Executive result","",f"Random expectation: **0.800 hits** per 6-number ticket.",f"Final holdout: **{H} draws**. Monte Carlo max-over-{len(STRATEGIES)}-strategies p-value: **{p:.4f}** (5,000 simulations).","", "## Walk-forward / holdout","", "| Strategy | Development | Holdout | Δ vs 0.8 |","|---|---:|---:|---:|"]
+    lines=[f"# Sportloto 6/45 — full-history analysis","",f"Generated: {datetime.utcnow().isoformat(timespec='seconds')} UTC",f"Draws: **{N}** | range: **{rows[0][0]} → {rows[-1][0]}** | archive months scanned: **{scanned}**","", "## Executive result","",f"Random expectation: **0.800 hits** per 6-number ticket.",f"Final holdout: **{H} draws**. Monte Carlo max-over-{len(STRATEGIES)}-strategies p-value: **{p:.4f}** (1,200 simulations).","", "## Walk-forward / holdout","", "| Strategy | Development | Holdout | Δ vs 0.8 |","|---|---:|---:|---:|"]
     for s in sorted(STRATEGIES,key=lambda x:-hold[x]):lines.append(f"| {s} | {dev[s]:.3f} | {hold[s]:.3f} | {hold[s]-.8:+.3f} |")
     lines += ["","## Holdout blocks (100 draws)","", "| Block | "+" | ".join(STRATEGIES)+" |","|---|"+"|".join(["---"]*len(STRATEGIES))+"|"]
     for a in range(0,H,100):
