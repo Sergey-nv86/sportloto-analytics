@@ -7,7 +7,8 @@ from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]; DATA=ROOT/"data/results.csv"; REPORT=ROOT/"reports/latest.md"; SIGNALS=ROOT/"reports/signals.md"
 DATA.parent.mkdir(parents=True,exist_ok=True); REPORT.parent.mkdir(parents=True,exist_ok=True)
 URL="http://russkoe-loto.com/sportloto6x45/arhiv-rezultatov/{:04d}/{:02d}"; UA="Mozilla/5.0 SportlotoResearch/2.0"
-STRATEGIES=["RANDOM","HOT","COLD","RECENT30","MOMENTUM","GAP","SELFLAG","CROSSLAG","PAIRS","LEARNED","ENSEMBLE"]
+DEFAULT_STRATEGIES=["RANDOM","HOT","COLD","RECENT30","MOMENTUM","GAP","SELFLAG","CROSSLAG","PAIRS","LEARNED","ENSEMBLE"]
+STRATEGIES=[x for x in os.environ.get("STRATEGIES","RANDOM,HOT,COLD,RECENT30,MOMENTUM,GAP,SELFLAG,CROSSLAG,PAIRS,LEARNED,ENSEMBLE").split(",") if x]
 
 def months(a,b):
     y,m=a
