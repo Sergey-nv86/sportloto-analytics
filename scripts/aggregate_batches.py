@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 import csv,json,random,statistics
 from pathlib import Path
-import sys\nfrom pathlib import Path\nsys.path.insert(0,str(Path(__file__).resolve().parent))\nfrom run_analysis import hit
+import sys
+from pathlib import Path
+sys.path.insert(0,str(Path(__file__).resolve().parent))
+from run_analysis import hit
 ROOT=Path(__file__).resolve().parents[1]; DATA=ROOT/"data/results.csv"; REPORT=ROOT/"reports/latest.md"; SIGNALS=ROOT/"reports/signals.md"
 ALL=["RANDOM","HOT","COLD","RECENT30","MOMENTUM","GAP","SELFLAG","CROSSLAG","PAIRS","LEARNED"]
 def rows():
@@ -37,7 +40,13 @@ def main():
     lines=["# Sportloto 6/45 — full-history analysis","",f"Draws: **{len(rs)}** | range: **{rs[0][0]} → {rs[-1][0]}**",f"Holdout: **{H} draws** | independent model batches: **4**","", "## Walk-forward / holdout","", "| Strategy | Development | Holdout | Δ vs 0.8 |","|---|---:|---:|---:|"]
     for s in sorted(merged,key=lambda x:-hold[x]): lines.append(f"| {s} | {dev[s]:.3f} | {hold[s]:.3f} | {hold[s]-.8:+.3f} |")
     lines += ["","## Multiple-model test","",f"- Random expectation: **0.800 hits** per ticket.","- Monte Carlo: **1,200 simulations** against the maximum across 11 strategies.","- Max-over-strategies p-value: **{:.4f}**.".format(p),"","## Interpretation","","The four calculation batches are independent at the workflow level and are combined only after out-of-sample predictions are produced. Ensemble is constructed from the batch predictions rather than re-running all models in one long process.","","Chronological holdout performance is the primary test. Historical frequency, pairs, lags and learned weights are exploratory and do not establish that future lottery outcomes are predictable.","","This is statistical research, not a guarantee of future lottery outcomes."]
-    REPORT.write_text("\n".join(lines)+"\n",encoding="utf-8")
-    SIGNALS.write_text("# Candidate signals\n\n"+"\n".join(f"- {s}: development {dev[s]:.3f}; holdout {hold[s]:.3f}; Δ vs random {hold[s]-.8:+.3f}" for s in sorted(merged,key=lambda x:-(hold[x]-.8)))+"\n",encoding="utf-8")
+    REPORT.write_text("
+".join(lines)+"
+",encoding="utf-8")
+    SIGNALS.write_text("# Candidate signals
+
+"+"
+".join(f"- {s}: development {dev[s]:.3f}; holdout {hold[s]:.3f}; Δ vs random {hold[s]-.8:+.3f}" for s in sorted(merged,key=lambda x:-(hold[x]-.8)))+"
+",encoding="utf-8")
     print(f"AGGREGATED draws={len(rs)} holdout={H} p={p:.4f}")
 if __name__=="__main__": main()
