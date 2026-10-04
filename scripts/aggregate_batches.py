@@ -158,7 +158,7 @@ def main():
     missing=[s for s in ALL if s not in merged]
     if missing: raise SystemExit("Missing batches: "+",".join(missing))
 
-    ens=[ensemble_ticket({s:{0:merged[s][i]} for s in ALL}) for i in range(len(actual))]
+    ens=[ensemble_ticket({s:merged[s][i] for s in ALL}) for i in range(len(actual))]
     merged["ENSEMBLE"]=ens
     dev["ENSEMBLE"]=statistics.mean(hit(ens[i],actual[i]) for i in range(len(ens)))
     H=len(actual)
