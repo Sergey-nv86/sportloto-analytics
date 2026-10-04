@@ -10,6 +10,8 @@ SIGNALS=ROOT/"reports/signals.md"
 NEXT=ROOT/"reports/next_bet.md"
 PENDING=ROOT/"reports/pending_prediction.json"
 HISTORY=ROOT/"reports/prediction_history.jsonl"
+JOURNAL=ROOT/"reports/prediction_journal_6x45.md"
+JOURNAL_STATE=ROOT/"reports/prediction_journal_6x45.json"
 
 ALL=["RANDOM","HOT","COLD","RECENT30","MOMENTUM","GAP","SELFLAG","CROSSLAG","PAIRS","LEARNED","LEARNED_EWMA"]
 
@@ -90,6 +92,123 @@ def write_walk_forward_ledger(rs, merged, actual):
     )
     return entries
 
+
+def load_journal_state():
+    if not JOURNAL_STATE.exists():
+        return []
+    try:
+        x=json.loads(JOURNAL_STATE.read_text(encoding="utf-8"))
+        return x if isinstance(x,list) else []
+    except Exception:
+        return []
+
+
+def save_journal_state(items):
+    JOURNAL_STATE.write_text(json.dumps(items,ensure_ascii=False,indent=2)+"\n",encoding="utf-8")
+
+
+def render_prediction_journal(state,pending=None):
+    lines=[
+        "# Sportloto 6/45 — журнал прогнозов",
+        "",
+        "Пять независимых исследовательских билетов на каждый следующий тираж. "
+        "Все прогнозы формируются до появления результата целевого тиража.",
+        "",
+        "## Статусы улучшений",
+        "",
+        "- 🟢 Внедрено — используется в текущем pipeline.",
+        "- 🟡 На тестировании — сравнивается на новых тиражах.",
+        "- 🔵 Ожидает проверки — данных пока недостаточно для вывода.",
+        "- 🔴 Отклонено — не используется.",
+        "",
+        "## Предложения по улучшению",
+        "",
+        "- 🟢 Внедрено — 5 исследовательских билетов: Main, SELFLAG, HOT, PAIRS, Experimental.",
+        "- 🟢 Внедрено — строгий no-leakage: прогноз создаётся только из данных до целевого тиража.",
+        "- 🟢 Внедрено — отдельный результат и hits для каждого из 5 билетов.",
+        "- 🟡 На тестировании — Experimental challenger (CROSSLAG) против основных моделей.",
+        "- 🔵 Ожидает проверки — динамическое перераспределение веса между пятью билетами после накопления новой выборки.",
+        "",
+        "## История",
+        ""
+    ]
+    for e in state:
+        lines += [
+            f"### Тираж {e['target_draw']} — источник {e['source_draw']}",
+            "",
+            f"- Время прогноза: **{e['source_datetime']}**",
+            f"- Фактическое время тиража: **{e.get('target_datetime') or 'ожидается'}**",
+            f"- Фактические числа: **{' · '.join(map(str,e['actual'])) if e.get('actual') else 'ожидаются'}**",
+            "",
+            "| Билет | Комбинация | Результат |",
+            "|---|---|---:|"
+        ]
+        for name,t in e["tickets"].items():
+            combo=" · ".join(map(str,t["ticket"]))
+            result=f"{t['hits']} / 6" if t.get("hits") is not None else "ожидается"
+            lines.append(f"| {name} | **{combo}** | **{result}** |")
+        lines.append("")
+    if pending:
+        lines += [
+            "## Текущий pending-прогноз",
+            "",
+            f"- Источник: **{pending['source_draw']}** ({pending['source_datetime']})",
+            f"- Целевой тираж: **{pending['target_draw']}**",
+            "",
+            "| Билет | Комбинация | Статус |",
+            "|---|---|---|"
+        ]
+        for name,t in pending["tickets"].items():
+            lines.append(f"| {name} | **{' · '.join(map(str,t['ticket']))}** | 🔵 Ожидает проверки |")
+        lines += ["", "После появления результата целевого тиража все 5 билетов автоматически получают отдельный результат."]
+    else:
+        lines += ["Текущего pending-прогноза нет."]
+    JOURNAL.write_text("\n".join(lines)+"\n",encoding="utf-8")
+
+
+def evaluate_five_ticket_pending(rs):
+    if not PENDING.exists():
+        return []
+    try:
+        p=json.loads(PENDING.read_text(encoding="utf-8"))
+    except Exception:
+        return []
+    if "tickets" not in p:
+        return []
+    source_draw=int(p["source_draw"])
+    candidates=[r for r in rs if r[0]>source_draw]
+    if not candidates:
+        return []
+    actual=candidates[0]
+    tickets=p["tickets"]
+    evaluated_tickets={}
+    for name,t in tickets.items():
+        evaluated_tickets[name]={
+            "ticket":list(t["ticket"]),
+            "hits":hit(t["ticket"],actual[2])
+        }
+    state=load_journal_state()
+    record={
+        "source_draw":source_draw,
+        "source_datetime":p["source_datetime"],
+        "target_draw":actual[0],
+        "target_datetime":actual[1],
+        "actual":list(actual[2]),
+        "tickets":evaluated_tickets,
+        "improvements":p.get("improvements",{})
+    }
+    state=[x for x in state if int(x.get("target_draw",-1)) != actual[0]]
+    state.append(record)
+    save_journal_state(state)
+    main_ticket=tickets.get("MAIN",tickets.get("EXPERIMENTAL"))["ticket"]
+    main_result={"source_draw":source_draw,"target_draw":actual[0],"ticket":main_ticket,
+                 "hits":hit(main_ticket,actual[2]),"datetime":actual[1],
+                 "actual":list(actual[2]),"strategy":"five_ticket_main"}
+    PENDING.unlink()
+    render_prediction_journal(state)
+    return [main_result]
+
+
 def evaluate_pending(rs):
     if not PENDING.exists():
         return []
@@ -168,16 +287,38 @@ def main():
     # Deterministic chronological ledger for the entire current holdout.
     ledger=write_walk_forward_ledger(rs,merged,actual)
     evaluated=evaluate_pending(rs)
+    evaluated_five=evaluate_five_ticket_pending(rs)
 
     ticket,selected,selected_hold=dynamic_next_ticket(rs)
     source=rs[-1]
-    PENDING.write_text(json.dumps({
+    ra,st=load_state(rs)
+    preds=ra.predict_state(st,set(ALL))
+    experimental_model="CROSSLAG" if "CROSSLAG" in preds else ("COLD" if "COLD" in preds else selected[0])
+    five_tickets={
+        "MAIN":{"ticket":ticket,"strategy":"dynamic_champion_ensemble","models":selected},
+        "SELFLAG":{"ticket":preds["SELFLAG"],"strategy":"single_model"},
+        "HOT":{"ticket":preds["HOT"],"strategy":"single_model"},
+        "PAIRS":{"ticket":preds["PAIRS"],"strategy":"single_model"},
+        "EXPERIMENTAL":{"ticket":preds[experimental_model],"strategy":"challenger","model":experimental_model},
+    }
+    pending_payload={
         "source_draw":source[0],
         "source_datetime":source[1],
+        "target_draw":source[0]+1,
         "ticket":ticket,
         "strategy":"dynamic_champion_ensemble",
         "models":selected,
-    },ensure_ascii=False,indent=2)+"\n",encoding="utf-8")
+        "tickets":five_tickets,
+        "improvements":{
+            "five_ticket_system":"implemented",
+            "no_leakage":"implemented",
+            "per_ticket_scoring":"implemented",
+            "experimental_challenger":"testing",
+            "dynamic_weight_reallocation":"pending_validation"
+        }
+    }
+    PENDING.write_text(json.dumps(pending_payload,ensure_ascii=False,indent=2)+"\n",encoding="utf-8")
+    render_prediction_journal(load_journal_state(),pending_payload)
 
     walk_hits=[x["hits"] for x in ledger]
     walk_mean=statistics.mean(walk_hits) if walk_hits else 0
@@ -243,6 +384,7 @@ def main():
     print(f"WALK_FORWARD={len(ledger)} MEAN_HITS={walk_mean:.4f}")
     print(f"NEXT_TICKET={ticket} MODELS={selected}")
     if evaluated: print(f"EVALUATED_PREVIOUS={evaluated[-1]['hits']}/6")
+    if evaluated_five: print("EVALUATED_FIVE_TICKETS="+str({k:v["hits"] for k,v in load_journal_state()[-1]["tickets"].items()}))
 
 if __name__=="__main__":
     main()

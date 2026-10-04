@@ -142,14 +142,17 @@ jobs:
           test -s reports/next_bet.md
           test -s reports/prediction_history.jsonl
           test -s reports/pending_prediction.json
+          test -s reports/prediction_journal_6x45.md
+          test -s reports/prediction_journal_6x45.json
           grep -q "Real chronological prediction ledger" reports/latest.md
+          grep -q "5 исследовательских билетов" reports/prediction_journal_6x45.md
           grep -q '"target_draw"' reports/prediction_history.jsonl
       - name: Commit updated data, reports and prediction ledger
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add data/results.csv reports/latest.md reports/signals.md reports/next_bet.md reports/prediction_history.jsonl reports/pending_prediction.json
-          git diff --cached --quiet || git commit -m "chore: update Sportloto 6x45 analysis and prediction ledger"
+          git add data/results.csv reports/latest.md reports/signals.md reports/next_bet.md reports/prediction_history.jsonl reports/pending_prediction.json reports/prediction_journal_6x45.md reports/prediction_journal_6x45.json
+          git diff --cached --quiet || git commit -m "chore: update Sportloto 6x45 analysis, five-ticket journal and prediction ledger"
           git push
       - uses: actions/upload-artifact@v4
         with:
@@ -160,4 +163,6 @@ jobs:
             reports/next_bet.md
             reports/prediction_history.jsonl
             reports/pending_prediction.json
+            reports/prediction_journal_6x45.md
+            reports/prediction_journal_6x45.json
             data/results.csv
