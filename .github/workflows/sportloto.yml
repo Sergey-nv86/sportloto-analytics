@@ -136,12 +136,20 @@ jobs:
           merge-multiple: true
       - name: Aggregate batches
         run: python scripts/aggregate_batches.py
-      - name: Commit updated data and reports
+      - name: Verify persistent prediction outputs
+        run: |
+          test -s reports/latest.md
+          test -s reports/next_bet.md
+          test -s reports/prediction_history.jsonl
+          test -s reports/pending_prediction.json
+          grep -q "Real chronological prediction ledger" reports/latest.md
+          grep -q '"target_draw"' reports/prediction_history.jsonl
+      - name: Commit updated data, reports and prediction ledger
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add data/results.csv reports/latest.md reports/signals.md
-          git diff --cached --quiet || git commit -m "chore: update full-history Sportloto analysis"
+          git add data/results.csv reports/latest.md reports/signals.md reports/next_bet.md reports/prediction_history.jsonl reports/pending_prediction.json
+          git diff --cached --quiet || git commit -m "chore: update Sportloto 6x45 analysis and prediction ledger"
           git push
       - uses: actions/upload-artifact@v4
         with:
@@ -149,4 +157,7 @@ jobs:
           path: |
             reports/latest.md
             reports/signals.md
+            reports/next_bet.md
+            reports/prediction_history.jsonl
+            reports/pending_prediction.json
             data/results.csv
