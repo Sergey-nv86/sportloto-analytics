@@ -33,9 +33,11 @@ def parse(html):
         dm=re.search(r'href="/sportloto5x36/rezultaty/(\d+)"[^>]*>\s*[\d\s]+\s*</a>',c)
         dt=re.search(r'<time[^>]+datetime="([^"]+)"',c)
         b=re.findall(r'<li[^>]*class="ball"[^>]*>\s*(\d+)\s*</li>',c)
-        if dm and len(b)>=5:
-            ns=tuple(sorted(map(int,b[:5])))
-            if len(set(ns))==6 and all(1<=n<=36 for n in ns[:5]) and 1<=ns[5]<=4:out.append((int(dm.group(1)),dt.group(1) if dt else "",ns))
+        if dm and len(b)>=6:
+            main=tuple(sorted(map(int,b[:5])))
+            bonus=int(b[5])
+            ns=main+(bonus,)
+            if len(set(main))==5 and all(1<=n<=36 for n in main) and 1<=bonus<=4:out.append((int(dm.group(1)),dt.group(1) if dt else "",ns))
     return out
 
 def load():
@@ -61,7 +63,7 @@ def init_state(rows):
     cnt=Counter(); r7=Counter(); r15=Counter(); r30=Counter(); r60=Counter(); r100=Counter(); pos={n:-1 for n in range(1,37)}
     tr={n:[0,0] for n in range(1,37)}; pair=Counter()
     for i,(*_,ns) in enumerate(rows):
-        for n in ns:
+        for n in ns[:5]:
             cnt[n]+=1; pos[n]=i
             if i>=len(rows)-30:r30[n]+=1
             if i>=len(rows)-100:r100[n]+=1
@@ -84,14 +86,14 @@ def advance_state(st, row):
             old=st[f"window{w}"]
             for n in old:
                 st[f"r{w}"][n]-=1
-    A=st["last"]; B=set(ns)
+    A=st["last"]; B=set(ns[:5])
     if A:
         for n in A:
             st["tr"][n][0]+=1; st["tr"][n][1]+=n in B
         for x in A:
             for y in B:
                 if x!=y:st["pair"][x,y]+=1
-    for n in ns:
+    for n in ns[:5]:
         st["cnt"][n]+=1; st["pos"][n]=i; st["r30"][n]+=1; st["r100"][n]+=1
     for w in (7,15,30,60,100):
         st[f"window{w}"]=B if i < w else st[f"window{w}_queue"].pop(0)
