@@ -77,7 +77,7 @@ def normalize_numbers(value):
         return sorted(set(out))
     if isinstance(value, str):
         import re
-        return sorted(set(int(x) for x in re.findall(r"(?<!\\d)(?:[1-9]|[1-3]\\d|4[0-5])(?!\\d)", value)))
+        return [int(x) for x in re.findall(r"(?<!\\d)(?:[1-9]|[1-2]\\d|3[0-6])(?!\\d)", value)]
     return []
 
 
@@ -96,9 +96,9 @@ def parse_draws(payload):
             number = int(number)
         except (TypeError, ValueError):
             continue
-        if len(nums) < 5 or len(set(nums[:5])) != 5:
+        if len(nums) < 6 or len(set(nums[:5])) != 5 or not 1 <= nums[5] <= 4:
             continue
-        out.append((number, str(date), tuple(nums[:5]) + (int(nums[5]) if len(nums)>5 else 0,)))
+        out.append((number, str(date), tuple(sorted(nums[:5])) + (int(nums[5]),)))
     return out
 
 
