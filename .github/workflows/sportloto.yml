@@ -1,6 +1,8 @@
 name: Sportloto analytics
 on:
   workflow_dispatch:
+  schedule:
+    - cron: "*/30 * * * *"
   push:
     branches: [main]
     paths-ignore:
@@ -12,23 +14,49 @@ concurrency:
 
 permissions:
   contents: write
+
 jobs:
   prepare:
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 20
+    outputs:
+      changed: ${{ steps.check.outputs.changed }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Prepare full-history dataset
-        run: python scripts/prepare_data.py
+      - name: Refresh recent draws from official Stoloto
+        run: |
+          BEFORE="$(sha256sum data/results.csv 2>/dev/null | awk '{print $1}')"
+          python scripts/fetch_stoloto.py
+          AFTER="$(sha256sum data/results.csv | awk '{print $1}')"
+          echo "BEFORE=$BEFORE"
+          echo "AFTER=$AFTER"
+          if [ "$BEFORE" != "$AFTER" ]; then
+            echo "DATA_CHANGED=true" >> "$GITHUB_ENV"
+          else
+            echo "DATA_CHANGED=false" >> "$GITHUB_ENV"
+          fi
+      - name: Decide whether analysis is needed
+        id: check
+        run: |
+          if [ "${{ github.event_name }}" != "schedule" ]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          elif [ "$DATA_CHANGED" = "true" ]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
       - uses: actions/upload-artifact@v4
+        if: steps.check.outputs.changed == 'true'
         with:
           name: sportloto-data
           path: data/results.csv
+
   batch:
     needs: prepare
+    if: needs.prepare.outputs.changed == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     strategy:
@@ -65,8 +93,10 @@ jobs:
         with:
           name: sportloto-batch-${{ matrix.name }}
           path: reports/batch_${{ matrix.name }}.json
+
   validation:
     needs: prepare
+    if: needs.prepare.outputs.changed == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -84,8 +114,10 @@ jobs:
         with:
           name: sportloto-selflag-validation
           path: reports/selflag_validation.md
+
   aggregate:
     needs: batch
+    if: needs.prepare.outputs.changed == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
