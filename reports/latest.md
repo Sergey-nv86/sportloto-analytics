@@ -26,10 +26,17 @@ Holdout: **2500 draws** | independent model batches: **4**
 - Monte Carlo: **1,200 simulations** against the maximum across 12 strategies.
 - Max-over-strategies p-value: **0.0674**.
 
+## Real chronological prediction ledger
+
+- Evaluated recommendations: **2500**
+- Mean hits per recommendation: **0.790 / 6**
+- Distribution 0–6 hits: **{'0': 1037, '1': 1019, '2': 380, '3': 61, '4': 3, '5': 0, '6': 0}**
+- Random baseline for 6/45: **0.800 hits**
+
 ## Current next recommendation
 
 **28 · 25 · 36 · 2 · 43 · 41**
 
-Dynamic champion ensemble; models are reweighted after each newly observed draw.
+Dynamic champion ensemble; weights are based on out-of-sample results available before the recommendation.
 
 This is statistical research, not a guarantee of future lottery outcomes.

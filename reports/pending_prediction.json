@@ -1,0 +1,19 @@
+{
+  "source_draw": 18963,
+  "source_datetime": "2026-10-03T23:59:00+0300",
+  "ticket": [
+    28,
+    25,
+    36,
+    2,
+    43,
+    41
+  ],
+  "strategy": "dynamic_champion_ensemble",
+  "models": [
+    "SELFLAG",
+    "HOT",
+    "PAIRS",
+    "CROSSLAG"
+  ]
+}
