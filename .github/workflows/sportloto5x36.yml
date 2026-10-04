@@ -1,0 +1,132 @@
+name: Sportloto 5/36 analytics
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "*/30 * * * *"
+  push:
+    branches: [main]
+    paths-ignore:
+      - "data/**"
+      - "reports/**"
+concurrency:
+  group: sportloto-5x36-analysis-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      changed: ${{ steps.check.outputs.changed }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Initialize full archive or refresh recent draws
+        run: |
+          if [ ! -s data/results_5x36.csv ]; then
+            echo "No 5x36 dataset yet — fetching full historical archive"
+            FETCH_ONLY=1 python scripts/run_analysis_5x36.py
+          else
+            python scripts/fetch_stoloto_5x36.py
+          fi
+          if git diff --quiet -- data/results_5x36.csv; then
+            echo "DATA_CHANGED=false" >> "$GITHUB_ENV"
+          else
+            echo "DATA_CHANGED=true" >> "$GITHUB_ENV"
+          fi
+      - name: Decide whether analysis is needed
+        id: check
+        run: |
+          if [ "${{ github.event_name }}" != "schedule" ]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          elif [ "$DATA_CHANGED" = "true" ]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/upload-artifact@v4
+        if: steps.check.outputs.changed == 'true'
+        with:
+          name: sportloto-5x36-data
+          path: data/results_5x36.csv
+
+  batch:
+    needs: prepare
+    if: needs.prepare.outputs.changed == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        include:
+          - name: baseline
+            strategies: RANDOM,HOT,COLD,RECENT30
+          - name: structural
+            strategies: MOMENTUM,GAP,SELFLAG
+          - name: pairwise
+            strategies: CROSSLAG,PAIRS
+          - name: learned
+            strategies: LEARNED,LEARNED_EWMA
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Download prepared dataset
+        uses: actions/download-artifact@v5
+        with:
+          name: sportloto-5x36-data
+          path: data
+      - name: Run isolated model batch
+        env:
+          SKIP_LOAD: "1"
+          STRATEGIES: ${{ matrix.strategies }}
+          BATCH_NAME: ${{ matrix.name }}
+          BATCH_OUT: reports/batch_5x36_${{ matrix.name }}.json
+        run: python scripts/run_analysis_5x36.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sportloto-5x36-batch-${{ matrix.name }}
+          path: reports/batch_5x36_${{ matrix.name }}.json
+
+  aggregate:
+    needs: [prepare, batch]
+    if: needs.prepare.outputs.changed == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@v5
+        with:
+          name: sportloto-5x36-data
+          path: data
+      - uses: actions/download-artifact@v5
+        with:
+          pattern: sportloto-5x36-batch-*
+          path: reports
+          merge-multiple: true
+      - name: Aggregate batches
+        run: python scripts/aggregate_batches_5x36.py
+      - name: Commit updated data and reports
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/results_5x36.csv reports/latest_5x36.md reports/signals_5x36.md reports/next_bet_5x36.md reports/pending_prediction_5x36.json reports/prediction_history_5x36.jsonl
+          git diff --cached --quiet || git commit -m "chore: update full-history Sportloto analysis"
+          git push
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sportloto-5x36-full-report
+          path: |
+            reports/latest_5x36.md
+            reports/signals_5x36.md
+            data/results_5x36.csv
