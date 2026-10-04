@@ -116,7 +116,7 @@ jobs:
           path: reports/selflag_validation.md
 
   aggregate:
-    needs: batch
+    needs: [prepare, batch]
     if: needs.prepare.outputs.changed == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
