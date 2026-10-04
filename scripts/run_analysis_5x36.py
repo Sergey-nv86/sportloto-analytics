@@ -4,7 +4,7 @@ from collections import Counter, defaultdict
 from datetime import datetime
 from pathlib import Path
 
-ROOT=Path(__file__).resolve().parents[1]; DATA=ROOT/"data/results.csv"; REPORT=ROOT/"reports/latest.md"; SIGNALS=ROOT/"reports/signals.md"
+ROOT=Path(__file__).resolve().parents[1]; DATA=ROOT/"data/results_5x36.csv"; REPORT=ROOT/"reports/latest_5x36.md"; SIGNALS=ROOT/"reports/signals_5x36.md"
 DATA.parent.mkdir(parents=True,exist_ok=True); REPORT.parent.mkdir(parents=True,exist_ok=True)
 URL="http://russkoe-loto.com/sportloto5x36/arhiv-rezultatov/{:04d}/{:02d}"; UA="Mozilla/5.0 SportlotoResearch/2.0"
 DEFAULT_STRATEGIES=["RANDOM","HOT","COLD","RECENT30","MOMENTUM","GAP","SELFLAG","CROSSLAG","PAIRS","LEARNED","LEARNED_EWMA","ENSEMBLE"]
