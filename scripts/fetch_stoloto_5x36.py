@@ -16,7 +16,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-DATA = ROOT / "data" / "results.csv"
+DATA = ROOT / "data" / "results_5x36.csv"
 
 API = "https://www.stoloto.ru/p/api/mobile/api/v35/service/draws/archive"
 UA = "Mozilla/5.0 SportlotoResearch/3.0"
@@ -72,7 +72,7 @@ def normalize_numbers(value):
                 n = int(item)
             except (TypeError, ValueError):
                 continue
-            if 1 <= n <= 45:
+            if 1 <= n <= 36:
                 out.append(n)
         return sorted(set(out))
     if isinstance(value, str):
