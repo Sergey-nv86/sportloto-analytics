@@ -206,6 +206,11 @@ def main():
         rows=sorted(rows,key=lambda x:(x[1],x[0])); errors=[]; scanned=0
     else:
         rows,errors,scanned=load()
+    if os.environ.get("FETCH_ONLY"):
+        if len(rows) < 1000:
+            raise SystemExit(f"Not enough data after archive fetch: {len(rows)}")
+        print(f"FETCH_ONLY_OK draws={len(rows)}")
+        return
     if len(rows)<1000:raise SystemExit(f"Not enough data: {len(rows)}")
     rows=sorted({r[0]:r for r in rows}.values(),key=lambda x:(x[1],x[0]));N=len(rows);H=min(2500,N//5);M=min(250,N-H-1);split=N-H-M
     preds={s:[] for s in STRATEGIES};actual=[]
