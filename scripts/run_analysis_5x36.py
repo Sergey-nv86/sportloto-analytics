@@ -6,7 +6,7 @@ from pathlib import Path
 
 ROOT=Path(__file__).resolve().parents[1]; DATA=ROOT/"data/results_5x36.csv"; REPORT=ROOT/"reports/latest_5x36.md"; SIGNALS=ROOT/"reports/signals_5x36.md"
 DATA.parent.mkdir(parents=True,exist_ok=True); REPORT.parent.mkdir(parents=True,exist_ok=True)
-URL="http://russkoe-loto.com/sportloto5x36/arhiv-rezultatov/{:04d}/{:02d}"; UA="Mozilla/5.0 SportlotoResearch/2.0"
+URL="https://russkoe-loto.com/sportloto5x36/arhiv-rezultatov/{:04d}/{:02d}"; UA="Mozilla/5.0 SportlotoResearch/2.1"
 DEFAULT_STRATEGIES=["RANDOM","HOT","COLD","RECENT30","MOMENTUM","GAP","SELFLAG","CROSSLAG","PAIRS","LEARNED","LEARNED_EWMA","ENSEMBLE"]
 STRATEGIES=[x for x in os.environ.get("STRATEGIES","RANDOM,HOT,COLD,RECENT30,MOMENTUM,GAP,SELFLAG,CROSSLAG,PAIRS,LEARNED,ENSEMBLE").split(",") if x]
 
@@ -29,15 +29,19 @@ def fetch(url):
 
 def parse(html):
     out=[]
-    for c in html.split('<div class="row">')[1:]:
-        dm=re.search(r'href="/sportloto5x36/rezultaty/(\d+)"[^>]*>\s*[\d\s]+\s*</a>',c)
-        dt=re.search(r'<time[^>]+datetime="([^"]+)"',c)
-        b=re.findall(r'<li[^>]*class="ball"[^>]*>\s*(\d+)\s*</li>',c)
-        if dm and len(b)>=6:
+    links=list(re.finditer(r'href="/sportloto5x36/rezultaty/(\d+)"[^>]*>.*?</a>',html,re.S|re.I))
+    for i,m in enumerate(links):
+        chunk=html[m.start():links[i+1].start() if i+1<len(links) else len(html)]
+        draw=int(m.group(1))
+        dt=re.search(r'<time[^>]+datetime="([^"]+)"',chunk,re.I)
+        b=re.findall(r'<li[^>]*class=["\\']ball["\\'][^>]*>\s*(\d+)\s*</li>',chunk,re.I)
+        if len(b)<6:
+            b=re.findall(r'class=["\\'][^"\\']*ball[^"\\']*["\\'][^>]*>\s*(\d+)\s*<',chunk,re.I)
+        if len(b)>=6:
             main=tuple(sorted(map(int,b[:5])))
-            bonus=int(b[5])
-            ns=main+(bonus,)
-            if len(set(main))==5 and all(1<=n<=36 for n in main) and 1<=bonus<=4:out.append((int(dm.group(1)),dt.group(1) if dt else "",ns))
+            bonus=int(b[5]); ns=main+(bonus,)
+            if len(set(main))==5 and all(1<=n<=36 for n in main) and 1<=bonus<=4:
+                out.append((draw,dt.group(1) if dt else "",ns))
     return out
 
 def load():
