@@ -26,3 +26,5 @@ python3 scripts/run_analysis.py
 <!-- analysis verification trigger: 2026-10-02-1233 -->
 
 <!-- CI trigger: optimized full-history analysis 2026-10-03 -->
+
+<!-- CI trigger: continue analysis 2026-10-04-0917 -->
