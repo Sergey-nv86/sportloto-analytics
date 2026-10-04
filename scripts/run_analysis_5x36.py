@@ -120,7 +120,7 @@ def feature_vector_ewma(st,n):
             st["r60"][n]/60.0,st["r100"][n]/100.0,gap,1.0 if n in st["last"] else 0.0]
 
 def learn_update(st,row,lr=0.08,weights_key="learned_w",feature_fn=feature_vector):
-    w=st[weights_key]; ns=set(row[2])
+    w=st[weights_key]; ns=set(row[2][:5])
     rate=lr/(1.0+0.00002*st["learned_steps"])
     for n in range(1,37):
         x=feature_fn(st,n); y=1.0 if n in ns else 0.0
@@ -133,8 +133,8 @@ def train_initial_model(rows,weights_key="learned_w",feature_fn=feature_vector):
     if len(rows)<2:return [0.0]*len(feature_fn(init_state(rows[:1]),1))
     st=init_state(rows[:1])
     for w in (7,15,30,60,100):
-        st[f"window{w}_queue"]=[set(rows[0][2])]
-        st[f"window{w}"]=set(rows[0][2])
+        st[f"window{w}_queue"]=[set(rows[0][2][:5])]
+        st[f"window{w}"]=set(rows[0][2][:5])
     st[weights_key]=[0.0]*len(feature_fn(st,1)); st["learned_steps"]=0
     for row in rows[1:]:
         learn_update(st,row,weights_key=weights_key,feature_fn=feature_fn)
@@ -174,7 +174,7 @@ def lag(rows,L=20):
 def self_lag(rows):
     den=Counter();num=Counter()
     for i in range(1,len(rows)):
-        A=set(rows[i-1][2]);B=set(rows[i][2])
+        A=set(rows[i-1][2][:5]);B=set(rows[i][2][:5])
         for n in A:den[n]+=1;num[n]+=n in B
     return sorted(((abs(num[n]/den[n]-5/36),n,num[n]/den[n],den[n]) for n in den),reverse=True)
 
@@ -215,12 +215,12 @@ def main():
     if "LEARNED_EWMA" in STRATEGIES: st["learned_ewma_w"]=train_initial_model(rows[:M],"learned_ewma_w",feature_vector_ewma)
     st["learned_steps"]=max(0,M-1)
     for w in (7,15,30,60,100):
-        st[f"window{w}_queue"]=[set(r[2]) for r in rows[max(0,M-w):M]]
+        st[f"window{w}_queue"]=[set(r[2][:5]) for r in rows[max(0,M-w):M]]
         st[f"window{w}"]=st[f"window{w}_queue"][-1] if st[f"window{w}_queue"] else set()
     for i in range(M,N):
         actual.append(rows[i][2])
         all_preds=predict_state(st)
-        for s in STRATEGIES:preds[s].append(sorted(rng.sample(range(1,37),6)) if s=="RANDOM" else all_preds[s])
+        for s in STRATEGIES:preds[s].append(sorted(rng.sample(range(1,37),5)) if s=="RANDOM" else all_preds[s])
         if "LEARNED" in STRATEGIES: learn_update(st, rows[i],weights_key="learned_w",feature_fn=feature_vector)
         if "LEARNED_EWMA" in STRATEGIES: learn_update(st, rows[i],weights_key="learned_ewma_w",feature_fn=feature_vector_ewma)
         advance_state(st, rows[i])
@@ -232,10 +232,10 @@ def main():
     dev={s:statistics.mean(hit(preds[s][i],dev_actual[i]) for i in range(split)) for s in STRATEGIES}
     hold={s:statistics.mean(hit(preds[s][split+i],hold_actual[i]) for i in range(H)) for s in STRATEGIES}
     hp={s:preds[s][split:] for s in STRATEGIES};obs,p=mc(hp,hold_actual)
-    freq=Counter(n for *_,ns in rows for n in ns); sums=[sum(ns) for *_,ns in rows]; overlaps=Counter(hit(rows[i-1][2],rows[i][2]) for i in range(1,N))
+    freq=Counter(n for *_,ns in rows for n in ns[:5]); sums=[sum(ns[:5]) for *_,ns in rows]; overlaps=Counter(hit(rows[i-1][2],rows[i][2]) for i in range(1,N))
     pairs=pair_counts(rows); triples=pair_counts(rows,True); lags=lag(rows); sl=self_lag(rows)
-    lines=[f"# Sportloto 5/36 — full-history analysis","",f"Generated: {datetime.utcnow().isoformat(timespec='seconds')} UTC",f"Draws: **{N}** | range: **{rows[0][0]} → {rows[-1][0]}** | archive months scanned: **{scanned}**","", "## Executive result","",f"Random expectation: **0.694 hits** per 5-number ticket.",f"Final holdout: **{H} draws**. Monte Carlo max-over-{len(STRATEGIES)}-strategies p-value: **{p:.4f}** (1,200 simulations).","", "## Walk-forward / holdout","", "| Strategy | Development | Holdout | Δ vs 0.6944444444444444 |","|---|---:|---:|---:|"]
-    for s in sorted(STRATEGIES,key=lambda x:-hold[x]):lines.append(f"| {s} | {dev[s]:.3f} | {hold[s]:.3f} | {hold[s]-.8:+.3f} |")
+    lines=[f"# Sportloto 5/36 — full-history analysis","",f"Generated: {datetime.utcnow().isoformat(timespec='seconds')} UTC",f"Draws: **{N}** | range: **{rows[0][0]} → {rows[-1][0]}** | archive months scanned: **{scanned}**","", "## Executive result","",f"Random expectation: **0.694 hits** per 5-number ticket.",f"Final holdout: **{H} draws**. Monte Carlo max-over-{len(STRATEGIES)}-strategies p-value: **{p:.4f}** (1,200 simulations).","", "## Walk-forward / holdout","", "| Strategy | Development | Holdout | Δ vs 0.694 |","|---|---:|---:|---:|"]
+    for s in sorted(STRATEGIES,key=lambda x:-hold[x]):lines.append(f"| {s} | {dev[s]:.3f} | {hold[s]:.3f} | {hold[s]-(5/36):+.3f} |")
     lines += ["","## Holdout blocks (100 draws)","", "| Block | "+" | ".join(STRATEGIES)+" |","|---|"+"|".join(["---"]*len(STRATEGIES))+"|"]
     for a in range(0,H,100):
         b=min(a+100,H);lines.append("| "+f"{a+1}-{b}"+" | "+" | ".join(f"{statistics.mean(hit(hp[s][i],hold_actual[i]) for i in range(a,b)):.3f}" for s in STRATEGIES)+" |")
@@ -243,12 +243,12 @@ def main():
     for name,w in [("All",N),("5y",min(1825,N)),("3y",min(1095,N)),("1y",min(365,N)),("6m",min(183,N)),("3m",min(92,N))]:
         f=Counter(n for *_,ns in rows[-w:] for n in ns);lines.append("| "+name+" | "+", ".join(f"{n}:{f[n]}" for n in f.most_common(10))+" |")
     lines += ["","## Pairs / triples","",f"Expected count for one specific pair: **{N*10/630:.2f}**",f"Expected count for one specific triple: **{N*10/7140:.2f}**","", "**Top pairs:** "+", ".join(f"{k}:{v}" for k,v in pairs.most_common(20)),"","**Top triples:** "+", ".join(f"{k}:{v}" for k,v in triples.most_common(20)),"","## Sequential dependence","", "| Lag | Mean overlap | Δ vs 0.6944444444444444 |","|---:|---:|---:|"]
-    for k,v in lags.items():lines.append(f"| {k} | {v:.4f} | {v-.8:+.4f} |")
+    for k,v in lags.items():lines.append(f"| {k} | {v:.4f} | {v-(5/36):+.4f} |")
     lines += ["","### Strongest self-lag deviations (unadjusted)","", "| Number | P(repeat next draw) | N |","|---:|---:|---:|"]
     for _,n,v,d in sl[:15]:lines.append(f"| {n} | {v:.4f} | {d} |")
     lines += ["","## Distribution","",f"- Sum mean: **{statistics.mean(sums):.3f}**; median: **{statistics.median(sums):.1f}**; SD: **{statistics.pstdev(sums):.3f}**; range: **{min(sums)}–{max(sums)}**.",f"- Previous-draw overlap: {', '.join(f'{k}:{v} ({v/(N-1):.2%})' for k,v in sorted(overlaps.items()))}","", "## Data integrity", "",f"- Unique draw IDs: **{len({r[0] for r in rows})}**",f"- Fetch warnings: **{len(errors)}**","", "## Interpretation","", "The LEARNED strategy is an online logistic model trained only on information available before each draw; its weights are updated after the observed draw. It is included as an experimental model, not as evidence that lottery outcomes are predictable. Historical frequencies, pairs, triples and lag extremes are descriptive and vulnerable to multiple testing. The decisive evidence is chronological out-of-sample performance. The holdout was not used to select models, and the Monte Carlo test accounts for searching across multiple strategies.","","This is statistical research, not a guarantee of future lottery outcomes."]
     REPORT.write_text("\n".join(lines)+"\n",encoding="utf-8")
-    SIGNALS.write_text("# Candidate signals\n\n"+"\n".join(f"- {s}: development {dev[s]:.3f}; holdout {hold[s]:.3f}; Δ vs random {hold[s]-.8:+.3f}" for s in sorted(STRATEGIES,key=lambda x:-(hold[x]-dev[x])))+"\n\nRaw pair/triple leaders are included in latest.md; they are not predictive claims.\n",encoding="utf-8")
+    SIGNALS.write_text("# Candidate signals\n\n"+"\n".join(f"- {s}: development {dev[s]:.3f}; holdout {hold[s]:.3f}; Δ vs random {hold[s]-(5/36):+.3f}" for s in sorted(STRATEGIES,key=lambda x:-(hold[x]-dev[x])))+"\n\nRaw pair/triple leaders are included in latest.md; they are not predictive claims.\n",encoding="utf-8")
     print(f"REPORT={REPORT}\nSIGNALS={SIGNALS}\nDRAWS={N} WARNINGS={len(errors)}")
 
 if __name__=="__main__":main()
