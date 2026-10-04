@@ -1,3 +1,4 @@
+# Canonical validation: reuse run_analysis strategy implementations.
 #!/usr/bin/env python3
 import random, statistics
 from pathlib import Path
