@@ -34,9 +34,9 @@ def parse(html):
         chunk=html[m.start():links[i+1].start() if i+1<len(links) else len(html)]
         draw=int(m.group(1))
         dt=re.search(r'<time[^>]+datetime="([^"]+)"',chunk,re.I)
-        b=re.findall(r'<li[^>]*class=["\\']ball["\\'][^>]*>\s*(\d+)\s*</li>',chunk,re.I)
+        b=re.findall(r"<li[^>]*class=[\"']ball[\"'][^>]*>\\s*(\\d+)\\s*</li>",chunk,re.I)
         if len(b)<6:
-            b=re.findall(r'class=["\\'][^"\\']*ball[^"\\']*["\\'][^>]*>\s*(\d+)\s*<',chunk,re.I)
+            b=re.findall(r"class=[\"'][^\"']*ball[^\"']*[\"'][^>]*>\\s*(\\d+)\\s*<",chunk,re.I)
         if len(b)>=6:
             main=tuple(sorted(map(int,b[:5])))
             bonus=int(b[5]); ns=main+(bonus,)
