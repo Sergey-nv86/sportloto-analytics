@@ -33,6 +33,7 @@ jobs:
           AFTER="$(sha256sum data/results.csv | awk '{print $1}')"
           echo "BEFORE=$BEFORE"
           echo "AFTER=$AFTER"
+          echo "LATEST_DRAW=$(tail -n 1 data/results.csv)"
           if [ "$BEFORE" != "$AFTER" ]; then
             echo "DATA_CHANGED=true" >> "$GITHUB_ENV"
           else
